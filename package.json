@@ -1,0 +1,16 @@
+{
+  "name": "art-aurea-api",
+  "version": "1.0.0",
+  "description": "API endpoints for Art Aurea Webflow sync",
+  "main": "api/sync-to-webflow.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "@sanity/client": "^6.0.0"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
