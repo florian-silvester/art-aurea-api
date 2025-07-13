@@ -356,7 +356,7 @@ async function syncLocations() {
       'name-german': item.name?.de || '',
       'description-english': item.description?.en || '',
       'description-german': item.description?.de || '',
-      'location-type': item.type || '',
+      'location-type': mapLocationType(item.type),
       address: item.address || '',
       'city-location': item.city?.name?.en || item.city?.name?.de || '',
       country: item.country?.name?.en || item.country?.name?.de || '',
