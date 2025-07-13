@@ -264,6 +264,165 @@ async function syncMediums() {
   return results.length
 }
 
+// PHASE 3: Sync Categories
+async function syncCategories() {
+  console.log('📂 Syncing Categories...')
+  
+  const sanityData = await sanityClient.fetch(`
+    *[_type == "category"] | order(title.en asc) {
+      _id,
+      title,
+      description,
+      slug
+    }
+  `)
+  
+  const webflowItems = sanityData.map(item => ({
+    fieldData: {
+      'name-english': item.title?.en || '',
+      'name-german': item.title?.de || '',
+      name: item.title?.en || item.title?.de || 'Untitled',
+      slug: item.slug?.current || generateSlug(item.title?.en || item.title?.de),
+      'description-english': item.description?.en || '',
+      'description-german': item.description?.de || ''
+    }
+  }))
+  
+  const results = await createWebflowItems(WEBFLOW_COLLECTIONS.category, webflowItems)
+  
+  // Store mappings
+  results.forEach((webflowItem, index) => {
+    const sanityItem = sanityData[index]
+    idMappings.category.set(sanityItem._id, webflowItem.id)
+  })
+  
+  console.log(`✅ Categories: ${results.length} created`)
+  return results.length
+}
+
+// PHASE 3: Sync Locations
+async function syncLocations() {
+  console.log('📍 Syncing Locations...')
+  
+  const sanityData = await sanityClient.fetch(`
+    *[_type == "location"] | order(name.en asc) {
+      _id,
+      name,
+      description,
+      address,
+      city,
+      country,
+      slug
+    }
+  `)
+  
+  const webflowItems = sanityData.map(item => ({
+    fieldData: {
+      ...mapBilingualName(item),
+      ...mapBilingualDescription(item),
+      address: item.address || '',
+      city: item.city || '',
+      country: item.country || ''
+    }
+  }))
+  
+  const results = await createWebflowItems(WEBFLOW_COLLECTIONS.location, webflowItems)
+  
+  // Store mappings
+  results.forEach((webflowItem, index) => {
+    const sanityItem = sanityData[index]
+    idMappings.location.set(sanityItem._id, webflowItem.id)
+  })
+  
+  console.log(`✅ Locations: ${results.length} created`)
+  return results.length
+}
+
+// PHASE 3: Sync Creators
+async function syncCreators() {
+  console.log('👤 Syncing Creators...')
+  
+  const sanityData = await sanityClient.fetch(`
+    *[_type == "creator"] | order(name asc) {
+      _id,
+      name,
+      biography,
+      birthYear,
+      deathYear,
+      category,
+      profileImage,
+      slug
+    }
+  `)
+  
+  const webflowItems = sanityData.map(item => ({
+    fieldData: {
+      name: item.name || 'Unknown Creator',
+      slug: item.slug?.current || generateSlug(item.name),
+      'biography-english': item.biography?.en || '',
+      'biography-german': item.biography?.de || '',
+      'birth-year': item.birthYear || null,
+      'death-year': item.deathYear || null,
+      category: item.category || ''
+    }
+  }))
+  
+  const results = await createWebflowItems(WEBFLOW_COLLECTIONS.creator, webflowItems)
+  
+  // Store mappings
+  results.forEach((webflowItem, index) => {
+    const sanityItem = sanityData[index]
+    idMappings.creator.set(sanityItem._id, webflowItem.id)
+  })
+  
+  console.log(`✅ Creators: ${results.length} created`)
+  return results.length
+}
+
+// PHASE 4: Sync Artworks (with references)
+async function syncArtworks() {
+  console.log('🎨 Syncing Artworks...')
+  
+  const sanityData = await sanityClient.fetch(`
+    *[_type == "artwork"] | order(title.en asc) {
+      _id,
+      title,
+      description,
+      creator->{_id, name},
+      category->{_id, title},
+      location->{_id, name},
+      materials[]->{_id, name},
+      medium->{_id, name},
+      finish->{_id, name},
+      dimensions,
+      year,
+      price,
+      slug,
+      mainImage
+    }
+  `)
+  
+  const webflowItems = sanityData.map(item => ({
+    fieldData: {
+      ...mapBilingualName(item.title ? {name: item.title} : {name: {en: 'Untitled', de: 'Ohne Titel'}}),
+      ...mapBilingualDescription(item),
+      creator: item.creator?._id ? idMappings.creator.get(item.creator._id) : null,
+      category: item.category?._id ? idMappings.category.get(item.category._id) : null,
+      location: item.location?._id ? idMappings.location.get(item.location._id) : null,
+      medium: item.medium?._id ? idMappings.medium.get(item.medium._id) : null,
+      finish: item.finish?._id ? idMappings.finish.get(item.finish._id) : null,
+      dimensions: item.dimensions || '',
+      year: item.year || null,
+      price: item.price || null
+    }
+  }))
+  
+  const results = await createWebflowItems(WEBFLOW_COLLECTIONS.artwork, webflowItems)
+  
+  console.log(`✅ Artworks: ${results.length} created`)
+  return results.length
+}
+
 // Main sync function
 async function performCompleteSync() {
   const startTime = Date.now()
@@ -286,7 +445,15 @@ async function performCompleteSync() {
     totalSynced += await syncMaterials()
     totalSynced += await syncMediums()
     
-    // TODO: Add more phases for categories, locations, creators, artworks
+    // Phase 3: Core content data
+    console.log('\n📂 PHASE 3: Core Content Data')
+    totalSynced += await syncCategories()
+    totalSynced += await syncLocations()
+    totalSynced += await syncCreators()
+    
+    // Phase 4: Complex data with references
+    console.log('\n🎨 PHASE 4: Artworks (with references)')
+    totalSynced += await syncArtworks()
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
     console.log(`\n✅ Complete sync finished in ${duration}s`)
