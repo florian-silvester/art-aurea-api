@@ -147,27 +147,75 @@ async function createWebflowItems(collectionId, items) {
 // Delete items from Webflow
 async function deleteWebflowItems(collectionId, itemIds) {
   const results = []
+  const batchSize = 5  // Smaller batches to avoid rate limits
   
-  for (const itemId of itemIds) {
-    try {
-      await webflowRequest(`/collections/${collectionId}/items/${itemId}`, {
-        method: 'DELETE'
-      })
-      results.push({ itemId, status: 'deleted' })
-    } catch (error) {
-      console.error(`Failed to delete ${itemId}:`, error.message)
-      results.push({ itemId, status: 'error', error: error.message })
+  for (let i = 0; i < itemIds.length; i += batchSize) {
+    const batch = itemIds.slice(i, i + batchSize)
+    console.log(`  🗑️  Deleting batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(itemIds.length/batchSize)} (${batch.length} items)`)
+    
+    const batchPromises = batch.map(async (itemId) => {
+      let attempts = 0
+      while (attempts < 3) {
+        try {
+          await webflowRequest(`/collections/${collectionId}/items/${itemId}`, {
+            method: 'DELETE'
+          })
+          return { itemId, status: 'deleted' }
+        } catch (error) {
+          attempts++
+          if (error.message.includes('429') && attempts < 3) {
+            console.log(`  ⏳ Rate limited, retrying ${itemId} in ${attempts * 2}s...`)
+            await new Promise(resolve => setTimeout(resolve, attempts * 2000))
+            continue
+          }
+          console.warn(`  ⚠️  Failed to delete ${itemId}: ${error.message}`)
+          return { itemId, status: 'error', error: error.message }
+        }
+      }
+    })
+    
+    const batchResults = await Promise.allSettled(batchPromises)
+    results.push(...batchResults.map(r => r.status === 'fulfilled' ? r.value : r.reason))
+    
+    // Longer delay between batches to avoid rate limits
+    if (i + batchSize < itemIds.length) {
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
+  }
+  
+  const successCount = results.filter(r => r.status === 'deleted').length
+  const errorCount = results.filter(r => r.status === 'error').length
+  
+  if (errorCount > 0) {
+    console.warn(`  ⚠️  ${errorCount} items failed to delete (${successCount} successful)`)
   }
   
   return results
 }
 
-// Get current Webflow items for comparison
+// Get current Webflow items for comparison (with pagination)
 async function getWebflowItems(collectionId) {
   try {
-    const result = await webflowRequest(`/collections/${collectionId}/items?limit=100`)
-    return result.items || []
+    let allItems = []
+    let offset = 0
+    const limit = 100
+    
+    while (true) {
+      const result = await webflowRequest(`/collections/${collectionId}/items?limit=${limit}&offset=${offset}`)
+      const items = result.items || []
+      
+      allItems.push(...items)
+      
+      // If we got fewer items than the limit, we've reached the end
+      if (items.length < limit) {
+        break
+      }
+      
+      offset += limit
+    }
+    
+    console.log(`  📄 Found ${allItems.length} existing items`)
+    return allItems
   } catch (error) {
     console.error(`Failed to get Webflow items:`, error.message)
     return []
