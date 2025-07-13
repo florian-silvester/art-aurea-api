@@ -1,4 +1,4 @@
-import {createClient} from '@sanity/client'
+const {createClient} = require('@sanity/client')
 
 // Sanity client
 const sanityClient = createClient({
@@ -32,20 +32,53 @@ const idMappings = {
   creator: new Map()
 }
 
-// Helper functions
-function mapBilingualName(sanityItem) {
+// Collection-specific mapping functions
+function mapMaterialTypeFields(sanityItem) {
   return {
     'name-english': sanityItem.name?.en || '',
     'name-german': sanityItem.name?.de || '',
+    'description-english': sanityItem.description?.en || '',
+    'description-german': sanityItem.description?.de || '',
     name: sanityItem.name?.en || sanityItem.name?.de || 'Untitled',
     slug: sanityItem.slug?.current || generateSlug(sanityItem.name?.en || sanityItem.name?.de)
   }
 }
 
-function mapBilingualDescription(sanityItem) {
+function mapCategoryFields(sanityItem) {
   return {
+    'title-german': sanityItem.title?.de || '',
+    description: sanityItem.description?.en || sanityItem.description?.de || '',
+    name: sanityItem.title?.en || sanityItem.title?.de || 'Untitled',
+    slug: sanityItem.slug?.current || generateSlug(sanityItem.title?.en || sanityItem.title?.de)
+  }
+}
+
+function mapCreatorFields(sanityItem) {
+  return {
+    'biography-english': sanityItem.biography?.en || '',
+    'biography-german': sanityItem.biography?.de || '',
+    'portrait-english': sanityItem.portrait?.en || '',
+    'portrait-german': sanityItem.portrait?.de || '',
+    name: sanityItem.name || 'Untitled',
+    slug: sanityItem.slug?.current || generateSlug(sanityItem.name)
+  }
+}
+
+function mapLocationFields(sanityItem) {
+  return {
+    name: sanityItem.name?.en || sanityItem.name?.de || 'Untitled',
+    slug: sanityItem.slug?.current || generateSlug(sanityItem.name?.en || sanityItem.name?.de)
+  }
+}
+
+function mapMediumFinishFields(sanityItem) {
+  return {
+    'name-english': sanityItem.name?.en || '',
+    'name-german': sanityItem.name?.de || '',
     'description-english': sanityItem.description?.en || '',
-    'description-german': sanityItem.description?.de || ''
+    'description-german': sanityItem.description?.de || '',
+    name: sanityItem.name?.en || sanityItem.name?.de || 'Untitled',
+    slug: sanityItem.slug?.current || generateSlug(sanityItem.name?.en || sanityItem.name?.de)
   }
 }
 
@@ -147,8 +180,7 @@ async function syncMaterialTypes() {
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      ...mapBilingualName(item),
-      ...mapBilingualDescription(item),
+      ...mapMaterialTypeFields(item),
       'sort-order': item.sortOrder || 0
     }
   }))
@@ -181,8 +213,7 @@ async function syncFinishes() {
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      ...mapBilingualName(item),
-      ...mapBilingualDescription(item)
+      ...mapMediumFinishFields(item)
     }
   }))
   
@@ -214,8 +245,7 @@ async function syncMaterials() {
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      ...mapBilingualName(item),
-      ...mapBilingualDescription(item),
+      ...mapMediumFinishFields(item),
       'material-type': item.materialType?._id ? idMappings.materialType.get(item.materialType._id) : null
     }
   }))
@@ -247,8 +277,7 @@ async function syncMediums() {
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      ...mapBilingualName(item),
-      ...mapBilingualDescription(item)
+      ...mapMediumFinishFields(item)
     }
   }))
   
@@ -264,7 +293,6 @@ async function syncMediums() {
   return results.length
 }
 
-// PHASE 3: Sync Categories
 async function syncCategories() {
   console.log('📂 Syncing Categories...')
   
@@ -279,10 +307,10 @@ async function syncCategories() {
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      'name-english': item.title?.en || '',
-      'name-german': item.title?.de || '',
       name: item.title?.en || item.title?.de || 'Untitled',
       slug: item.slug?.current || generateSlug(item.title?.en || item.title?.de),
+      'name-english': item.title?.en || '',
+      'name-german': item.title?.de || '',
       'description-english': item.description?.en || '',
       'description-german': item.description?.de || ''
     }
@@ -300,7 +328,6 @@ async function syncCategories() {
   return results.length
 }
 
-// PHASE 3: Sync Locations
 async function syncLocations() {
   console.log('📍 Syncing Locations...')
   
@@ -308,21 +335,36 @@ async function syncLocations() {
     *[_type == "location"] | order(name.en asc) {
       _id,
       name,
-      description,
+      type,
       address,
-      city,
-      country,
+      city->{name},
+      country->{name},
+      website,
+      times,
+      phone,
+      email,
+      description,
       slug
     }
   `)
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      ...mapBilingualName(item),
-      ...mapBilingualDescription(item),
+      name: item.name?.en || item.name?.de || 'Untitled',
+      slug: item.slug?.current || generateSlug(item.name?.en || item.name?.de),
+      'name-english': item.name?.en || '',
+      'name-german': item.name?.de || '',
+      'description-english': item.description?.en || '',
+      'description-german': item.description?.de || '',
+      'location-type': item.type || '',
       address: item.address || '',
-      city: item.city || '',
-      country: item.country || ''
+      'city-location': item.city?.name?.en || item.city?.name?.de || '',
+      country: item.country?.name?.en || item.country?.name?.de || '',
+      website: item.website || '',
+      'opening-times-english': item.times?.en || '',
+      'opening-times-german': item.times?.de || '',
+      phone: item.phone || '',
+      email: item.email || ''
     }
   }))
   
@@ -338,7 +380,6 @@ async function syncLocations() {
   return results.length
 }
 
-// PHASE 3: Sync Creators
 async function syncCreators() {
   console.log('👤 Syncing Creators...')
   
@@ -347,23 +388,26 @@ async function syncCreators() {
       _id,
       name,
       biography,
-      birthYear,
-      deathYear,
-      category,
-      profileImage,
+      portrait,
+      nationality,
+      specialties,
+      galleryImages,
       slug
     }
   `)
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      name: item.name || 'Unknown Creator',
+      name: item.name || 'Untitled',
       slug: item.slug?.current || generateSlug(item.name),
       'biography-english': item.biography?.en || '',
       'biography-german': item.biography?.de || '',
-      'birth-year': item.birthYear || null,
-      'death-year': item.deathYear || null,
-      category: item.category || ''
+      'portrait-english': item.portrait?.en || '',
+      'portrait-german': item.portrait?.de || '',
+      'nationality-english': item.nationality?.en || '',
+      'nationality-german': item.nationality?.de || '',
+      'specialties-english': item.specialties?.en || '',
+      'specialties-german': item.specialties?.de || ''
     }
   }))
   
@@ -379,41 +423,45 @@ async function syncCreators() {
   return results.length
 }
 
-// PHASE 4: Sync Artworks (with references)
+// PHASE 8: Sync Artworks
 async function syncArtworks() {
   console.log('🎨 Syncing Artworks...')
   
   const sanityData = await sanityClient.fetch(`
-    *[_type == "artwork"] | order(title.en asc) {
+    *[_type == "artwork"] | order(name asc) {
       _id,
-      title,
+      name,
+      workTitle,
       description,
-      creator->{_id, name},
-      category->{_id, title},
-      location->{_id, name},
-      materials[]->{_id, name},
-      medium->{_id, name},
-      finish->{_id, name},
-      dimensions,
+      creator->{_id},
+      category->{_id},
+      materials[]->{_id},
+      medium[]->{_id},
+      finishes[]->{_id},
+      size,
       year,
       price,
-      slug,
-      mainImage
-    }
+      slug
+    }[0...100]
   `)
   
   const webflowItems = sanityData.map(item => ({
     fieldData: {
-      ...mapBilingualName(item.title ? {name: item.title} : {name: {en: 'Untitled', de: 'Ohne Titel'}}),
-      ...mapBilingualDescription(item),
+      name: item.name || 'Untitled',
+      slug: item.slug?.current || generateSlug(item.name || item.workTitle?.en),
+      'work-title': item.workTitle?.en || item.workTitle?.de || '',
+      'work-title-english': item.workTitle?.en || '',
+      'work-title-german': item.workTitle?.de || '',
+      'description-english': item.description?.en || '',
+      'description-german': item.description?.de || '',
       creator: item.creator?._id ? idMappings.creator.get(item.creator._id) : null,
-      category: item.category?._id ? idMappings.category.get(item.category._id) : null,
-      location: item.location?._id ? idMappings.location.get(item.location._id) : null,
-      medium: item.medium?._id ? idMappings.medium.get(item.medium._id) : null,
-      finish: item.finish?._id ? idMappings.finish.get(item.finish._id) : null,
-      dimensions: item.dimensions || '',
-      year: item.year || null,
-      price: item.price || null
+      category: item.category?._id ? [idMappings.category.get(item.category._id)].filter(Boolean) : [],
+      materials: item.materials?.map(mat => idMappings.material.get(mat._id)).filter(Boolean) || [],
+      medium: item.medium?.map(med => idMappings.medium.get(med._id)).filter(Boolean) || [],
+      finishes: item.finishes?.map(fin => idMappings.finish.get(fin._id)).filter(Boolean) || [],
+      'size-dimensions': item.size || '',
+      year: item.year || '',
+      price: item.price || ''
     }
   }))
   
@@ -439,20 +487,17 @@ async function performCompleteSync() {
     console.log('\n📋 PHASE 1: Foundation Data')
     totalSynced += await syncMaterialTypes()
     totalSynced += await syncFinishes()
+    totalSynced += await syncCategories()
+    totalSynced += await syncLocations()
     
     // Phase 2: Reference data (with dependencies)
     console.log('\n🔗 PHASE 2: Reference Data')
     totalSynced += await syncMaterials()
     totalSynced += await syncMediums()
-    
-    // Phase 3: Core content data
-    console.log('\n📂 PHASE 3: Core Content Data')
-    totalSynced += await syncCategories()
-    totalSynced += await syncLocations()
     totalSynced += await syncCreators()
     
-    // Phase 4: Complex data with references
-    console.log('\n🎨 PHASE 4: Artworks (with references)')
+    // Phase 3: Complex data (with multiple dependencies)
+    console.log('\n🎨 PHASE 3: Complex Data')
     totalSynced += await syncArtworks()
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
@@ -473,7 +518,7 @@ async function performCompleteSync() {
 }
 
 // Main API handler
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -512,4 +557,4 @@ export default async function handler(req, res) {
       timestamp: new Date().toISOString()
     })
   }
-} /* Force deployment */
+} 
