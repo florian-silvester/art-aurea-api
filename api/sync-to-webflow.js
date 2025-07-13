@@ -90,6 +90,16 @@ function generateSlug(text) {
     .replace(/^-|-$/g, '')
 }
 
+
+// Map Sanity location types to Webflow location types
+function mapLocationType(sanityType) {
+  const typeMapping = {
+    'museum': 'Museum',
+    'shop-gallery': 'Shop / Gallery',
+    'studio': 'Studio'
+  }
+  return typeMapping[sanityType] || 'Shop / Gallery' // Default to Shop / Gallery
+}
 // Webflow API helper
 async function webflowRequest(endpoint, options = {}) {
   const baseUrl = 'https://api.webflow.com/v2'
