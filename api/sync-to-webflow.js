@@ -492,6 +492,7 @@ function mapCreatorFields(sanityItem, locale = 'en') {
   // Locale-agnostic fields (same for all locales)
   const baseFields = {
     'name': sanityItem.name || 'Untitled',
+    'last-name': sanityItem.lastName || '',
     'slug': sanityItem.slug?.current || generateSlug(sanityItem.name),
     'hero-image': (sanityItem.cover?.asset?.url ? {
       url: sanityItem.cover.asset.url,
@@ -1333,6 +1334,7 @@ async function syncCreators(limit = null) {
       *[_type == "creator"] | order(name asc) {
         _id,
         name,
+        lastName,
         cover{
           asset->{
             _id,
