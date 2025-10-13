@@ -45,8 +45,8 @@ if (!WEBFLOW_SITE_ID) {
 
 // Webflow locale IDs (will be resolved at runtime)
 let WEBFLOW_LOCALES = {
-  en: null,      // Primary locale ID
-  'de-DE': null  // German locale ID
+  'en-US': null,  // Primary locale ID (use en-US key for consistency)
+  'de-DE': null   // German locale ID
 }
 
 // CLI args
@@ -61,6 +61,7 @@ const FLAG_CHECK_ONLY = ARGS.includes('--check-only')
 const FLAG_PUBLISH = ARGS.includes('--publish')
 const ARG_ONLY = getArg('only') // e.g. --only=creator|artwork|material
 const ARG_ITEM = getArg('item') // e.g. --item=creator-id-123 (single item sync)
+const FLAG_ENGLISH_ONLY = ARGS.includes('--english-only')
 
 // Webflow collection IDs (resolved dynamically at runtime)
 let WEBFLOW_COLLECTIONS = null
@@ -77,12 +78,11 @@ async function resolveWebflowLocales() {
   try {
     const siteInfo = await webflowRequest(`/sites/${WEBFLOW_SITE_ID}`)
     if (siteInfo.locales) {
-      // Primary locale
+      // With Advanced Localization, we can use the correct locale IDs
       if (siteInfo.locales.primary?.cmsLocaleId) {
-        WEBFLOW_LOCALES.en = siteInfo.locales.primary.cmsLocaleId
-        console.log(`  🌍 Primary locale (en): ${WEBFLOW_LOCALES.en}`)
+        WEBFLOW_LOCALES['en-US'] = siteInfo.locales.primary.cmsLocaleId
+        console.log(`  🌍 Primary locale (en-US): ${WEBFLOW_LOCALES['en-US']}`)
       }
-      // Secondary locales
       if (Array.isArray(siteInfo.locales.secondary)) {
         const germanLocale = siteInfo.locales.secondary.find(l => l.tag === 'de' || l.tag === 'de-DE')
         if (germanLocale?.cmsLocaleId) {
@@ -128,8 +128,8 @@ async function resolveWebflowCollections() {
     materialType: pick('material-types', 'material type', 'material types', 'materialtype'),
     material: pick('materials', 'material'),
     finish: pick('finishes', 'finish'),
-    medium: pick('mediums', 'media', 'medium'),
-    category: pick('categories', 'category'),
+    medium: pick('type', 'types', 'media', 'medium'), // Sanity medium (Type) → Webflow Type
+    category: pick('medium', 'mediums', 'category', 'categories'), // Sanity category (Medium) → Webflow Medium
     location: pick('locations', 'location'),
     creator: pick('creators', 'creator', 'profiles', 'profile'),
     artwork: pick('artworks', 'artwork', 'works', 'work')
@@ -554,8 +554,20 @@ function mapLocationType(sanityType) {
   return typeMapping[sanityType] || 'Shop / Gallery' // Default to Shop / Gallery
 }
 
+// Global rate limiter - add delay before EVERY API request
+let lastRequestTime = 0
+const MIN_REQUEST_INTERVAL = 1200 // Minimum 1.2 seconds between ANY requests
+
 // Webflow API helper with rate limit handling
 async function webflowRequest(endpoint, options = {}, retryCount = 0) {
+  // Global rate limiting - ensure minimum time between requests
+  const now = Date.now()
+  const timeSinceLastRequest = now - lastRequestTime
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    await sleep(MIN_REQUEST_INTERVAL - timeSinceLastRequest)
+  }
+  lastRequestTime = Date.now()
+  
   const baseUrl = 'https://api.webflow.com/v2'
   const maxRetries = 3
   
@@ -590,25 +602,44 @@ async function webflowRequest(endpoint, options = {}, retryCount = 0) {
   return response.json()
 }
 
-// Update one item in a Webflow collection (UPSERT path)
+// Update one item in a Webflow collection (using bulk PATCH with cmsLocaleId in payload)
 async function updateWebflowItem(collectionId, itemId, fieldData, localeId = null) {
   try {
-    await sleep(300) // basic throttle
-    const endpoint = localeId 
-      ? `/collections/${collectionId}/items/${itemId}?cmsLocaleId=${localeId}`
-      : `/collections/${collectionId}/items/${itemId}`
-    const result = await webflowRequest(endpoint, {
+    await sleep(1000) // throttle to avoid rate limits
+    
+    // DEBUG: Log what we're sending
+    if (fieldData.name === 'Tora Urup') {
+      console.log(`\n🐛 DEBUG - Updating Tora Urup:`)
+      console.log(`   Locale: ${localeId || 'PRIMARY'}`)
+      console.log(`   Portrait: ${fieldData['portrait-english']?.substring(0, 60)}...`)
+      console.log(`   Biography: ${fieldData['biography']?.substring(0, 60)}...`)
+    }
+    
+    // Use bulk PATCH with cmsLocaleId in the payload (works with Advanced Localization)
+    const itemPayload = {
+      id: itemId,
+      fieldData
+    }
+    
+    // Include cmsLocaleId in payload if specified
+    if (localeId) {
+      itemPayload.cmsLocaleId = localeId
+    }
+    
+    const result = await webflowRequest(`/collections/${collectionId}/items`, {
       method: 'PATCH',
-      body: JSON.stringify({ fieldData })
+      body: JSON.stringify({ items: [itemPayload] })
     })
-    return result
+    
+    // Return the first item from the response
+    return result?.items?.[0] || result
   } catch (error) {
     console.error(`Update failed for ${itemId} (locale: ${localeId || 'primary'}):`, error.message)
     throw error
   }
 }
 
-// Update secondary locale (German) for an item
+// Create/update secondary locale (German) for an item
 async function updateItemGermanLocale(collectionId, itemId, sanityItem, fieldMapper) {
   if (!WEBFLOW_LOCALES['de-DE']) {
     return // Skip if German locale not available
@@ -626,51 +657,112 @@ async function updateItemGermanLocale(collectionId, itemId, sanityItem, fieldMap
       germanFields['description'] = actualItem.description?.de || ''
     }
     
-    // Only send locale-specific fields, not base fields like name/slug/images
-    const localeOnlyFields = {}
-    const localeFieldNames = ['biography', 'portrait', 'portrait-english', 'nationality', 'specialties', 'description', 'work-title']
-    localeFieldNames.forEach(field => {
-      if (germanFields[field] !== undefined) {
-        localeOnlyFields[field] = germanFields[field]
-      }
+    // With Advanced Localization, use POST with id + cmsLocaleId to create/update DE locale
+    // This works whether the DE locale exists or not
+    const result = await webflowRequest(`/collections/${collectionId}/items`, {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [{
+          id: itemId,
+          cmsLocaleId: WEBFLOW_LOCALES['de-DE'],
+          fieldData: germanFields,
+          isDraft: false
+        }]
+      })
     })
     
-    if (Object.keys(localeOnlyFields).length > 0) {
-      await updateWebflowItem(collectionId, itemId, localeOnlyFields, WEBFLOW_LOCALES['de-DE'])
-      console.log(`    🇩🇪 Updated German locale`)
+    if (result?.items?.[0]?.cmsLocaleId === WEBFLOW_LOCALES['de-DE']) {
+      console.log(`    🇩🇪 Created/Updated German locale`)
     }
   } catch (error) {
-    console.warn(`    ⚠️  Failed to update German locale: ${error.message}`)
+    console.warn(`    ⚠️  Failed to create/update German locale: ${error.message}`)
   }
 }
 
-// Create items in Webflow
-async function createWebflowItems(collectionId, items) {
-  const batchSize = 50
+// Create items in Webflow using bulk endpoint with both locales
+async function createWebflowItems(collectionId, items, progressCallback = null) {
   const results = []
   
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize)
-    console.log(`Creating batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(items.length/batchSize)} (${batch.length} items)`)
+  // Process items one at a time to properly create linked EN+DE variants
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    console.log(`Creating item ${i + 1}/${items.length}...`)
     
     try {
-      const result = await webflowRequest(`/collections/${collectionId}/items`, {
+      // Step 1: Create linked item in BOTH locales using /bulk endpoint
+      const createResult = await webflowRequest(`/collections/${collectionId}/items/bulk`, {
         method: 'POST',
-        body: JSON.stringify({ items: batch })
+        body: JSON.stringify({
+          cmsLocaleIds: [WEBFLOW_LOCALES['en-US'], WEBFLOW_LOCALES['de-DE']],
+          isDraft: !FLAG_PUBLISH,
+          fieldData: item.fieldData
+        })
       })
-      const created = Array.isArray(result?.items) ? result.items : []
-      results.push(...created)
-      // If --publish was requested, publish created items immediately
-      if (FLAG_PUBLISH && created.length > 0) {
-        const createdIds = created.map(i => i?.id).filter(Boolean)
+      
+      const createdItem = createResult?.items?.[0]
+      if (!createdItem) {
+        throw new Error('No item returned from bulk create')
+      }
+      
+      results.push(createdItem)
+      console.log(`  ✅ Created EN+DE: ${createdItem.id}`)
+      
+      // Emit progress event for every item (progress bar)
+      if (progressCallback) {
+        progressCallback({
+          progress: {
+            phase: 'Creating items',
+            message: `Created ${i + 1} of ${items.length}`,
+            current: i + 1,
+            total: items.length
+          }
+        })
+      }
+      
+      // Emit toast notification for first, milestones, and last items
+      if (progressCallback && (i === 0 || (i + 1) % 25 === 0 || i === items.length - 1)) {
+        progressCallback({
+          itemCreated: item.fieldData?.name || item.fieldData?.slug || createdItem.id
+        })
+      }
+      
+      // Step 2: Update DE locale with German-specific content if available
+      // (The bulk create uses EN content by default, now we patch DE)
+      if (item.germanFieldData) {
         try {
-          await publishWebflowItems(collectionId, createdIds)
-        } catch (e) {
-          console.warn(`  ⚠️  Failed to publish ${createdIds.length} created items: ${e.message}`)
+          await webflowRequest(`/collections/${collectionId}/items/${createdItem.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              cmsLocaleId: WEBFLOW_LOCALES['de-DE'],
+              fieldData: item.germanFieldData
+            })
+          })
+          console.log(`  🇩🇪 Updated German content`)
+        } catch (deError) {
+          console.warn(`  ⚠️  Failed to update DE locale: ${deError.message}`)
         }
       }
+      
+      // Step 3: Publish if requested
+      if (FLAG_PUBLISH) {
+        try {
+          await webflowRequest(`/collections/${collectionId}/items/publish`, {
+            method: 'POST',
+            body: JSON.stringify({
+              items: [{
+                id: createdItem.id,
+                cmsLocaleIds: [WEBFLOW_LOCALES['en-US'], WEBFLOW_LOCALES['de-DE']]
+              }]
+            })
+          })
+          console.log(`  🚀 Published both locales`)
+        } catch (publishError) {
+          console.warn(`  ⚠️  Failed to publish: ${publishError.message}`)
+        }
+      }
+      
     } catch (error) {
-      console.error(`Batch failed:`, error.message)
+      console.error(`  ❌ Failed to create item:`, error.message)
       throw error
     }
   }
@@ -678,8 +770,8 @@ async function createWebflowItems(collectionId, items) {
   return results
 }
 
-// Publish items in batches
-async function publishWebflowItems(collectionId, itemIds) {
+// Publish items in batches (publishes BOTH EN and DE locales)
+async function publishWebflowItems(collectionId, itemIds, progressCallback = null) {
   const batchSize = 50
   for (let i = 0; i < itemIds.length; i += batchSize) {
     const batch = itemIds.slice(i, i + batchSize)
@@ -688,10 +780,30 @@ async function publishWebflowItems(collectionId, itemIds) {
     while (attempt < maxAttempts) {
       try {
         console.log(`  🚀 Publishing batch ${Math.floor(i/batchSize)+1}/${Math.ceil(itemIds.length/batchSize)} (${batch.length} items)...`)
+        
+        // Use new format with cmsLocaleIds to publish BOTH EN and DE locales
         await webflowRequest(`/collections/${collectionId}/items/publish`, {
           method: 'POST',
-          body: JSON.stringify({ itemIds: batch })
+          body: JSON.stringify({ 
+            items: batch.map(id => ({
+              id,
+              cmsLocaleIds: [WEBFLOW_LOCALES['en-US'], WEBFLOW_LOCALES['de-DE']]
+            }))
+          })
         })
+        
+        // Emit progress event
+        if (progressCallback) {
+          progressCallback({
+            progress: {
+              phase: 'Publishing items',
+              message: `Published ${Math.min(i + batchSize, itemIds.length)} of ${itemIds.length}`,
+              current: Math.min(i + batchSize, itemIds.length),
+              total: itemIds.length
+            }
+          })
+        }
+        
         break
       } catch (e) {
         attempt++
@@ -756,6 +868,7 @@ async function getWebflowItems(collectionId) {
     const limit = 100
     
     while (true) {
+      await sleep(500) // Add delay between pagination requests
       const result = await webflowRequest(`/collections/${collectionId}/items?limit=${limit}&offset=${offset}`)
       const items = result.items || []
       
@@ -1019,7 +1132,7 @@ async function syncArtworkImages(artworkImages) {
 }
 
 // Universal duplicate-aware collection sync helper with UPSERT and delta detection
-async function syncCollection(options) {
+async function syncCollection(options, progressCallback = null) {
   const {
     name,
     collectionId,
@@ -1105,8 +1218,25 @@ async function syncCollection(options) {
     }
 
     if (!existingId) {
-      // New item - prepare for creation
-      const webflowItem = { fieldData: mappedFieldsForId }
+      // New item - prepare for creation with both EN and DE content
+      const webflowItem = { 
+        fieldData: mappedFieldsForId,
+        germanFieldData: null // Will be populated below if German content exists
+      }
+      
+      // Prepare German-specific field data if item has DE locale content
+      if (fieldMapper.length > 1) {
+        // fieldMapper accepts (item, locale) - get German fields
+        try {
+          const germanFields = fieldMapper(item, 'de')
+          if (germanFields && Object.keys(germanFields).length > 0) {
+            webflowItem.germanFieldData = germanFields
+          }
+        } catch (e) {
+          // German mapping failed, will use EN content for DE locale
+        }
+      }
+      
       newItems.push({ item, webflowItem })
     } else {
       // Existing item - check if update is needed via delta hash
@@ -1126,12 +1256,49 @@ async function syncCollection(options) {
   
   console.log(`  📊 ${newItems.length} new, ${updateItems.length} to update, ${existingCount} existing`)
   
+  // Find and delete orphaned items (in Webflow but not in Sanity)
+  const sanityIds = new Set(sanityData.map(item => item._id))
+  const sanitySlugs = new Set(sanityData.map(item => {
+    const slug = item.slug?.current || null
+    return slug
+  }).filter(Boolean))
+  
+  const orphanedItems = existingWebflowItems.filter(wfItem => {
+    // Check if this Webflow item has a mapping to a Sanity ID
+    for (const [sanityId, webflowId] of idMappings[mappingKey]) {
+      if (webflowId === wfItem.id) {
+        return !sanityIds.has(sanityId) // Orphaned if Sanity ID doesn't exist
+      }
+    }
+    // Also check by slug - if no Sanity item has this slug, it's orphaned
+    const wfSlug = wfItem.fieldData?.slug
+    if (wfSlug && !sanitySlugs.has(wfSlug)) {
+      return true
+    }
+    return false
+  })
+  
+  if (orphanedItems.length > 0) {
+    console.log(`  🗑️  Deleting ${orphanedItems.length} orphaned items from Webflow...`)
+    const orphanedIds = orphanedItems.map(item => item.id)
+    await deleteWebflowItems(collectionId, orphanedIds)
+    // Clean up mappings
+    orphanedItems.forEach(wfItem => {
+      for (const [sanityId, webflowId] of idMappings[mappingKey]) {
+        if (webflowId === wfItem.id) {
+          idMappings[mappingKey].delete(sanityId)
+          persistentHashes.delete(`${mappingKey}:${sanityId}`)
+        }
+      }
+    })
+  }
+  
   // Create new items in Webflow (primary locale)
   let results = []
   if (newItems.length > 0) {
-    results = await createWebflowItems(collectionId, newItems.map(ni => ni.webflowItem))
+    results = await createWebflowItems(collectionId, newItems.map(ni => ni.webflowItem), progressCallback)
     
-    // Store new mappings and update German locale
+    // Store new mappings and explicitly update both locales
     for (let index = 0; index < results.length; index++) {
       const webflowItem = results[index]
       const sanityItem = newItems[index].item
@@ -1140,9 +1307,19 @@ async function syncCollection(options) {
       const hash = hashObjectStable(webflowItem.fieldData)
       persistentHashes.set(`${mappingKey}:${sanityItem._id}`, hash)
       
-      // Update German locale if fieldMapper supports it
+      // Update/create both locales for newly created items
       if (fieldMapper && webflowItem.id) {
-        await updateItemGermanLocale(collectionId, webflowItem.id, sanityItem, fieldMapper)
+        // Update primary (EN) locale
+        const primaryFields = fieldMapper(sanityItem, 'en')
+        if (!FLAG_ENGLISH_ONLY) {
+          await updateWebflowItem(collectionId, webflowItem.id, primaryFields, WEBFLOW_LOCALES['en-US'])
+        }
+        
+        // Create/update German locale (skip if english-only)
+        if (!FLAG_ENGLISH_ONLY) {
+          await sleep(800) // Delay between locale updates
+          await updateItemGermanLocale(collectionId, webflowItem.id, sanityItem, fieldMapper)
+        }
       }
     }
   }
@@ -1156,12 +1333,35 @@ async function syncCollection(options) {
   for (let i = 0; i < updateItems.length; i++) {
     const u = updateItems[i]
     try {
-      await updateWebflowItem(collectionId, u.webflowId, u.webflowItem.fieldData)
+      // DEBUG: Check what we're sending for Tora Urup
+      if (u.item.name === 'Tora Urup') {
+        console.log(`\n🐛 DEBUG Tora Urup PRIMARY locale update:`)
+        console.log(`   fieldMapper(item, 'en') returns:`)
+        const testEn = fieldMapper(u.item, 'en')
+        console.log(`   Portrait: ${testEn['portrait-english']?.substring(0,60)}...`)
+        console.log(`   Biography: ${testEn['biography']?.substring(0,60)}...`)
+        console.log(`\n   u.webflowItem.fieldData contains:`)
+        console.log(`   Portrait: ${u.webflowItem.fieldData['portrait-english']?.substring(0,60)}...`)
+        console.log(`   Biography: ${u.webflowItem.fieldData['biography']?.substring(0,60)}...`)
+      }
+      
+      // Update primary locale with English content
+      await updateWebflowItem(collectionId, u.webflowId, u.webflowItem.fieldData, FLAG_ENGLISH_ONLY ? null : WEBFLOW_LOCALES['en-US'])
       persistentHashes.set(u.key, u.hash)
       updatedItemIds.push(u.webflowId)
       
-      // Update German locale
-      if (fieldMapper) {
+      // Create/update German locale (skip if english-only)
+      if (!FLAG_ENGLISH_ONLY && fieldMapper) {
+        // DEBUG: Check German locale data
+        if (u.item.name === 'Tora Urup') {
+          console.log(`\n🐛 DEBUG Tora Urup GERMAN locale update:`)
+          console.log(`   fieldMapper(item, 'de-DE') returns:`)
+          const testDe = fieldMapper(u.item, 'de-DE')
+          console.log(`   Portrait: ${testDe['portrait-english']?.substring(0,60)}...`)
+          console.log(`   Biography: ${testDe['biography']?.substring(0,60)}...`)
+        }
+        
+        await sleep(800) // Extra delay between primary and German locale (increased from 300ms)
         await updateItemGermanLocale(collectionId, u.webflowId, u.item, fieldMapper)
       }
       
@@ -1171,7 +1371,7 @@ async function syncCollection(options) {
       }
     } catch (e) {
       if (String(e.message).includes('429')) {
-        await sleep(1500)
+        await sleep(3000) // Longer delay on rate limit (increased from 1500ms)
         await updateWebflowItem(collectionId, u.webflowId, u.webflowItem.fieldData)
         if (fieldMapper) {
           await updateItemGermanLocale(collectionId, u.webflowId, u.item, fieldMapper)
@@ -1188,7 +1388,7 @@ async function syncCollection(options) {
   // Batch publish all updated items
   if (FLAG_PUBLISH && updatedItemIds.length > 0) {
     console.log(`  📢 Batch publishing ${updatedItemIds.length} updated items...`)
-    await publishWebflowItems(collectionId, updatedItemIds)
+    await publishWebflowItems(collectionId, updatedItemIds, progressCallback)
   }
 
   const unchangedCount = Math.max(existingCount - updateItems.length, 0)
@@ -1197,7 +1397,7 @@ async function syncCollection(options) {
 }
 
 // PHASE 1: Sync Material Types
-async function syncMaterialTypes(limit = null) {
+async function syncMaterialTypes(limit = null, progressCallback = null) {
   return syncCollection({
     name: 'Material Types',
     collectionId: WEBFLOW_COLLECTIONS.materialType,
@@ -1213,11 +1413,11 @@ async function syncMaterialTypes(limit = null) {
     `,
     fieldMapper: mapMaterialTypeFields,
     limit
-  })
+  }, progressCallback)
 }
 
 // PHASE 2: Sync Finishes
-async function syncFinishes(limit = null) {
+async function syncFinishes(limit = null, progressCallback = null) {
   return syncCollection({
     name: 'Finishes',
     collectionId: WEBFLOW_COLLECTIONS.finish,
@@ -1232,11 +1432,11 @@ async function syncFinishes(limit = null) {
     `,
     fieldMapper: mapMediumFinishFields,
     limit
-  })
+  }, progressCallback)
 }
 
 // PHASE 3: Sync Materials (with Material Type references)
-async function syncMaterials(limit = null) {
+async function syncMaterials(limit = null, progressCallback = null) {
   return syncCollection({
     name: 'Materials',
     collectionId: WEBFLOW_COLLECTIONS.material,
@@ -1259,13 +1459,13 @@ async function syncMaterials(limit = null) {
       }
     },
     limit
-  })
+  }, progressCallback)
 }
 
 // PHASE 4: Sync other collections
-async function syncMediums(limit = null) {
+async function syncMediums(limit = null, progressCallback = null) {
   return syncCollection({
-    name: 'Mediums',
+    name: 'Types',
     collectionId: WEBFLOW_COLLECTIONS.medium,
     mappingKey: 'medium',
     sanityQuery: `
@@ -1278,12 +1478,12 @@ async function syncMediums(limit = null) {
     `,
     fieldMapper: mapMediumFinishFields,
     limit
-  })
+  }, progressCallback)
 }
 
-async function syncCategories(limit = null) {
+async function syncCategories(limit = null, progressCallback = null) {
   return syncCollection({
-    name: 'Categories',
+    name: 'Mediums',
     collectionId: WEBFLOW_COLLECTIONS.category,
     mappingKey: 'category',
     sanityQuery: `
@@ -1296,10 +1496,10 @@ async function syncCategories(limit = null) {
     `,
     fieldMapper: mapCategoryFields,
     limit
-  })
+  }, progressCallback)
 }
 
-async function syncLocations(limit = null) {
+async function syncLocations(limit = null, progressCallback = null) {
   return syncCollection({
     name: 'Locations',
     collectionId: WEBFLOW_COLLECTIONS.location,
@@ -1322,10 +1522,10 @@ async function syncLocations(limit = null) {
     `,
     fieldMapper: mapLocationFields,
     limit
-  })
+  }, progressCallback)
 }
 
-async function syncCreators(limit = null) {
+async function syncCreators(limit = null, progressCallback = null) {
   return syncCollection({
     name: 'Creators',
     collectionId: WEBFLOW_COLLECTIONS.creator,
@@ -1365,11 +1565,11 @@ async function syncCreators(limit = null) {
     `,
     fieldMapper: mapCreatorFields,
     limit
-  })
+  }, progressCallback)
 }
 
 // PHASE 8: Sync Artworks
-async function syncArtworks(limit = null) {
+async function syncArtworks(limit = null, progressCallback = null) {
   // Custom artwork mapper with image handling
   const artworkCustomSync = async (item) => {
     // Simple URL-based image handling - let Webflow handle uploads
@@ -1501,7 +1701,7 @@ async function syncArtworks(limit = null) {
     fieldMapper: null, // Not used since we use customImageSync
     customImageSync: artworkCustomSync,
     limit
-  })
+  }, progressCallback)
 }
 
 // Sync artworks only for a specific subset of creators (by Sanity IDs)
@@ -1689,11 +1889,21 @@ async function performCompleteSync(progressCallback = null, options = {}) {
   const updateProgress = (step, message, currentCount = 0, totalCount = 0) => {
     if (progressCallback) {
       progressCallback({
-        phase: step,
-        message,
-        currentCount,
-        totalCount,
+        progress: {
+          phase: step,
+          message,
+          current: currentCount,
+          total: totalCount
+        },
         totalSynced
+      })
+    }
+  }
+  
+  const emitPhaseComplete = (phaseName) => {
+    if (progressCallback) {
+      progressCallback({
+        phase: phaseName
       })
     }
   }
@@ -1740,7 +1950,7 @@ async function performCompleteSync(progressCallback = null, options = {}) {
     const phase1All = [
       { name: 'Material Types', key: 'materialType', func: syncMaterialTypes },
       { name: 'Finishes', key: 'finish', func: syncFinishes },
-      { name: 'Categories', key: 'category', func: syncCategories },
+      { name: 'Mediums', key: 'category', func: syncCategories },
       { name: 'Locations', key: 'location', func: syncLocations }
     ]
     const syncFunctions = (only ? phase1All.filter(p => p.key === only || normalize(p.name) === normalize(only)) : phase1All)
@@ -1749,7 +1959,7 @@ async function performCompleteSync(progressCallback = null, options = {}) {
       const { name, func } = syncFunctions[i]
       try {
         updateProgress('Phase 1', `Syncing ${name}...`, i + 1, 4)
-        totalSynced += await func(limitPerCollection)
+        totalSynced += await func(limitPerCollection, progressCallback)
       } catch (error) {
         console.error(`❌ Failed to sync ${name}: ${error.message}`)
         updateProgress('Phase 1', `Failed to sync ${name}: ${error.message}`, i + 1, 4)
@@ -1757,13 +1967,15 @@ async function performCompleteSync(progressCallback = null, options = {}) {
       }
     }
     
+    emitPhaseComplete('Foundation Data')
+    
     // Phase 2: Reference data (with dependencies)
     updateProgress('Phase 2', 'Starting reference data sync...', 0, 3)
     console.log('\n🔗 PHASE 2: Reference Data')
     
     const phase2All = [
       { name: 'Materials', key: 'material', func: syncMaterials },
-      { name: 'Mediums', key: 'medium', func: syncMediums },
+      { name: 'Types', key: 'medium', func: syncMediums },
       { name: 'Creators', key: 'creator', func: syncCreators }
     ]
     const syncFunctions2 = (only ? phase2All.filter(p => p.key === only || normalize(p.name) === normalize(only)) : phase2All)
@@ -1772,13 +1984,15 @@ async function performCompleteSync(progressCallback = null, options = {}) {
       const { name, func } = syncFunctions2[i]
       try {
         updateProgress('Phase 2', `Syncing ${name}...`, i + 1, 3)
-        totalSynced += await func(limitPerCollection)
+        totalSynced += await func(limitPerCollection, progressCallback)
       } catch (error) {
         console.error(`❌ Failed to sync ${name}: ${error.message}`)
         updateProgress('Phase 2', `Failed to sync ${name}: ${error.message}`, i + 1, 3)
         // Continue with other collections instead of failing completely
       }
     }
+    
+    emitPhaseComplete('Reference Data')
     
     // Phase 3: Complex data (with multiple dependencies)
     updateProgress('Phase 3', 'Starting artwork sync...', 0, 1)
@@ -1787,12 +2001,14 @@ async function performCompleteSync(progressCallback = null, options = {}) {
     if (!only || only === 'artwork' || normalize(only) === 'artworks') {
       try {
         updateProgress('Phase 3', 'Syncing Artworks with Images...', 1, 1)
-        totalSynced += await syncArtworks(limitPerCollection)
+        totalSynced += await syncArtworks(limitPerCollection, progressCallback)
       } catch (error) {
         console.error(`❌ Failed to sync Artworks:`, error)
         updateProgress('Phase 3', `Failed to sync Artworks: ${error.message}`, 1, 1)
       }
     }
+    
+    emitPhaseComplete('Complex Data')
     
     // PHASE 4: Populate Creator Works (Reverse Linkage)
     if (!only || only === 'creator' || normalize(only) === 'creators') {
@@ -1804,6 +2020,8 @@ async function performCompleteSync(progressCallback = null, options = {}) {
         updateProgress('Phase 4', `Failed to populate creator works: ${error.message}`, 1, 1)
       }
     }
+    
+    emitPhaseComplete('Reverse Linkage')
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
     console.log(`\n✅ Complete sync finished in ${duration}s`)
@@ -1839,13 +2057,46 @@ async function performCompleteSync(progressCallback = null, options = {}) {
 
 // Main API handler
 module.exports = async function handler(req, res) {
-  // CORS headers
+  // CORS headers - allow all necessary headers (echo requested headers for preflight)
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  const requested = req.headers['access-control-request-headers']
+  if (requested) {
+    res.setHeader('Access-Control-Allow-Headers', requested)
+  } else {
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, content-type, Authorization')
+  }
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Authorization')
   
   if (req.method === 'OPTIONS') {
+    // Preflight request
     return res.status(200).end()
+  }
+  
+  // Support GET for streaming (no preflight CORS issues)
+  if (req.method === 'GET' && (req.query?.stream === '1' || req.query?.stream === 'true')) {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    
+    const sendEvent = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`)
+    }
+    
+    try {
+      console.log('🔔 Sync triggered via API (GET streaming)')
+      const result = await performCompleteSync(sendEvent, { limitPerCollection: null })
+      sendEvent({ 
+        complete: true, 
+        duration: result.duration, 
+        totalItems: result.totalSynced 
+      })
+    } catch (error) {
+      sendEvent({ type: 'error', error: error.message })
+    } finally {
+      res.end()
+    }
+    return
   }
   
   if (req.method !== 'POST') {
@@ -1872,13 +2123,18 @@ module.exports = async function handler(req, res) {
       res.setHeader('Connection', 'keep-alive')
       
       const sendProgress = (progress) => {
-        res.write(`data: ${JSON.stringify({ type: 'progress', ...progress })}\n\n`)
+        // Send progress update
+        res.write(`data: ${JSON.stringify(progress)}\n\n`)
       }
       
       try {
         console.log('🔔 Sync triggered via API (streaming)')
         const result = await performCompleteSync(sendProgress, { limitPerCollection: limitValue })
-        res.write(`data: ${JSON.stringify({ type: 'complete', result })}\n\n`)
+        res.write(`data: ${JSON.stringify({ 
+          complete: true, 
+          duration: result.duration, 
+          totalItems: result.totalSynced 
+        })}\n\n`)
         res.end()
       } catch (error) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`)
