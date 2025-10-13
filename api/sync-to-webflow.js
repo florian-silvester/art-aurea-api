@@ -2055,6 +2055,72 @@ async function performCompleteSync(progressCallback = null, options = {}) {
   }
 }
 
+// Single item sync function
+async function syncSingleItem(documentId, documentType, autoPublish = true) {
+  console.log(`📋 Syncing single ${documentType}: ${documentId}`)
+  
+  // Initialize collections and locales
+  if (!WEBFLOW_COLLECTIONS) {
+    WEBFLOW_COLLECTIONS = await resolveWebflowCollections()
+  }
+  await resolveWebflowLocales()
+  
+  // Load mappings
+  await loadIdMappings()
+  loadPersistentMappings()
+  await loadAssetMappings()
+  
+  // Map document type to collection key and sync function
+  const typeMap = {
+    'creator': { key: 'creator', syncFn: syncCreators, collectionId: WEBFLOW_COLLECTIONS.creator },
+    'artwork': { key: 'artwork', syncFn: syncArtworks, collectionId: WEBFLOW_COLLECTIONS.artwork },
+    'category': { key: 'category', syncFn: syncCategories, collectionId: WEBFLOW_COLLECTIONS.category },
+    'medium': { key: 'medium', syncFn: syncMediums, collectionId: WEBFLOW_COLLECTIONS.medium },
+    'material': { key: 'material', syncFn: syncMaterials, collectionId: WEBFLOW_COLLECTIONS.material },
+    'materialType': { key: 'materialType', syncFn: syncMaterialTypes, collectionId: WEBFLOW_COLLECTIONS.materialType },
+    'finish': { key: 'finish', syncFn: syncFinishes, collectionId: WEBFLOW_COLLECTIONS.finish },
+    'location': { key: 'location', syncFn: syncLocations, collectionId: WEBFLOW_COLLECTIONS.location }
+  }
+  
+  const config = typeMap[documentType]
+  if (!config) {
+    throw new Error(`Unknown document type: ${documentType}`)
+  }
+  
+  // Sync the specific item using targeted query
+  const result = await syncCollection({
+    ...config,
+    name: `${documentType} (single item)`,
+    collectionId: config.collectionId,
+    mappingKey: config.key,
+    sanityQuery: `*[_type == "${documentType}" && (_id == "${documentId}" || _id == "drafts.${documentId}")] | order(_id desc) [0] {
+      _id, webflowId, name, slug, title, workTitle, description, 
+      ...
+    }`,
+    limit: 1,
+    singleItemMode: true
+  })
+  
+  // Publish if requested
+  if (autoPublish) {
+    const webflowId = idMappings[config.key].get(documentId.replace('drafts.', ''))
+    if (webflowId) {
+      await publishWebflowItems(config.collectionId, [webflowId])
+    }
+  }
+  
+  // Save mappings
+  await saveIdMappings()
+  await saveAssetMappings()
+  
+  return {
+    documentId,
+    documentType,
+    synced: true,
+    published: autoPublish
+  }
+}
+
 // Main API handler
 module.exports = async function handler(req, res) {
   // CORS headers - allow all necessary headers (echo requested headers for preflight)
@@ -2112,8 +2178,21 @@ module.exports = async function handler(req, res) {
       throw new Error('WEBFLOW_API_TOKEN environment variable is required')
     }
     
-    // Check if client wants streaming progress and optional limit
-    const { streaming, limit, limitPerCollection } = req.body || {}
+    // Check for single-item sync mode
+    const { documentId, documentType, syncType, autoPublish, streaming, limit, limitPerCollection } = req.body || {}
+    
+    if (syncType === 'single-item' && documentId && documentType) {
+      // SINGLE ITEM SYNC MODE
+      console.log(`🔔 Single item sync: ${documentType}/${documentId}`)
+      const result = await syncSingleItem(documentId, documentType, autoPublish !== false)
+      return res.status(200).json({
+        success: true,
+        message: `Successfully synced ${documentType}`,
+        ...result
+      })
+    }
+    
+    // FULL SYNC MODE
     const limitValue = Number.isFinite(Number(limitPerCollection)) ? Number(limitPerCollection) : (Number.isFinite(Number(limit)) ? Number(limit) : (process.env.LIMIT_PER_COLLECTION ? Number(process.env.LIMIT_PER_COLLECTION) : null))
     
     if (streaming) {
