@@ -1526,12 +1526,13 @@ async function syncLocations(limit = null, progressCallback = null) {
 }
 
 async function syncCreators(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Creators',
     collectionId: WEBFLOW_COLLECTIONS.creator,
     mappingKey: 'creator',
     sanityQuery: `
-      *[_type == "creator"] | order(name asc) {
+      *[_type == "creator" ${filter}] | order(name asc) {
         _id,
         name,
         lastName,
@@ -2070,54 +2071,76 @@ async function syncSingleItem(documentId, documentType, autoPublish = true) {
   loadPersistentMappings()
   await loadAssetMappings()
   
-  // Map document type to collection key and sync function
-  const typeMap = {
-    'creator': { key: 'creator', syncFn: syncCreators, collectionId: WEBFLOW_COLLECTIONS.creator },
-    'artwork': { key: 'artwork', syncFn: syncArtworks, collectionId: WEBFLOW_COLLECTIONS.artwork },
-    'category': { key: 'category', syncFn: syncCategories, collectionId: WEBFLOW_COLLECTIONS.category },
-    'medium': { key: 'medium', syncFn: syncMediums, collectionId: WEBFLOW_COLLECTIONS.medium },
-    'material': { key: 'material', syncFn: syncMaterials, collectionId: WEBFLOW_COLLECTIONS.material },
-    'materialType': { key: 'materialType', syncFn: syncMaterialTypes, collectionId: WEBFLOW_COLLECTIONS.materialType },
-    'finish': { key: 'finish', syncFn: syncFinishes, collectionId: WEBFLOW_COLLECTIONS.finish },
-    'location': { key: 'location', syncFn: syncLocations, collectionId: WEBFLOW_COLLECTIONS.location }
-  }
+  // Clean document ID (remove drafts prefix)
+  const baseId = documentId.replace('drafts.', '')
   
-  const config = typeMap[documentType]
-  if (!config) {
-    throw new Error(`Unknown document type: ${documentType}`)
-  }
+  // Temporarily set a global filter for single-item mode
+  global.SINGLE_ITEM_FILTER = `&& (_id == "${baseId}" || _id == "drafts.${baseId}")`
   
-  // Sync the specific item using targeted query
-  const result = await syncCollection({
-    ...config,
-    name: `${documentType} (single item)`,
-    collectionId: config.collectionId,
-    mappingKey: config.key,
-    sanityQuery: `*[_type == "${documentType}" && (_id == "${documentId}" || _id == "drafts.${documentId}")] | order(_id desc) [0] {
-      _id, webflowId, name, slug, title, workTitle, description, 
-      ...
-    }`,
-    limit: 1,
-    singleItemMode: true
-  })
-  
-  // Publish if requested
-  if (autoPublish) {
-    const webflowId = idMappings[config.key].get(documentId.replace('drafts.', ''))
-    if (webflowId) {
-      await publishWebflowItems(config.collectionId, [webflowId])
+  try {
+    // Map document type to sync function
+    const syncFunctions = {
+      'creator': syncCreators,
+      'artwork': syncArtworks,
+      'category': syncCategories,
+      'medium': syncMediums,
+      'material': syncMaterials,
+      'materialType': syncMaterialTypes,
+      'finish': syncFinishes,
+      'location': syncLocations
     }
-  }
-  
-  // Save mappings
-  await saveIdMappings()
-  await saveAssetMappings()
-  
-  return {
-    documentId,
-    documentType,
-    synced: true,
-    published: autoPublish
+    
+    const syncFn = syncFunctions[documentType]
+    if (!syncFn) {
+      throw new Error(`Unknown document type: ${documentType}`)
+    }
+    
+    // Run the sync with limit=1
+    await syncFn(1)
+    
+    // Publish if requested
+    if (autoPublish) {
+      const collectionIds = {
+        'creator': WEBFLOW_COLLECTIONS.creator,
+        'artwork': WEBFLOW_COLLECTIONS.artwork,
+        'category': WEBFLOW_COLLECTIONS.category,
+        'medium': WEBFLOW_COLLECTIONS.medium,
+        'material': WEBFLOW_COLLECTIONS.material,
+        'materialType': WEBFLOW_COLLECTIONS.materialType,
+        'finish': WEBFLOW_COLLECTIONS.finish,
+        'location': WEBFLOW_COLLECTIONS.location
+      }
+      
+      const mappingKeys = {
+        'creator': 'creator',
+        'artwork': 'artwork',
+        'category': 'category',
+        'medium': 'medium',
+        'material': 'material',
+        'materialType': 'materialType',
+        'finish': 'finish',
+        'location': 'location'
+      }
+      
+      const webflowId = idMappings[mappingKeys[documentType]].get(baseId)
+      if (webflowId) {
+        await publishWebflowItems(collectionIds[documentType], [webflowId])
+      }
+    }
+    
+    // Save mappings
+    await saveIdMappings()
+    await saveAssetMappings()
+    
+    return {
+      documentId: baseId,
+      documentType,
+      synced: true,
+      published: autoPublish
+    }
+  } finally {
+    // Clean up global filter
+    delete global.SINGLE_ITEM_FILTER
   }
 }
 
