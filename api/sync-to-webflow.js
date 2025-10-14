@@ -1399,6 +1399,7 @@ async function syncCollection(options, progressCallback = null) {
 // PHASE 1: Sync Material Types
 async function syncMaterialTypes(limit = null, progressCallback = null) {
   const filter = global.SINGLE_ITEM_FILTER || ''
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Material Types',
     collectionId: WEBFLOW_COLLECTIONS.materialType,
