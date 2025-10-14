@@ -1398,12 +1398,13 @@ async function syncCollection(options, progressCallback = null) {
 
 // PHASE 1: Sync Material Types
 async function syncMaterialTypes(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Material Types',
     collectionId: WEBFLOW_COLLECTIONS.materialType,
     mappingKey: 'materialType',
     sanityQuery: `
-      *[_type == "materialType"] | order(sortOrder asc, name.en asc) {
+      *[_type == "materialType" ${filter}] | order(sortOrder asc, name.en asc) {
         _id,
         name,
         description,
@@ -1418,12 +1419,13 @@ async function syncMaterialTypes(limit = null, progressCallback = null) {
 
 // PHASE 2: Sync Finishes
 async function syncFinishes(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Finishes',
     collectionId: WEBFLOW_COLLECTIONS.finish,
     mappingKey: 'finish',
     sanityQuery: `
-      *[_type == "finish"] | order(name.en asc) {
+      *[_type == "finish" ${filter}] | order(name.en asc) {
         _id,
         name,
         description,
@@ -1437,12 +1439,13 @@ async function syncFinishes(limit = null, progressCallback = null) {
 
 // PHASE 3: Sync Materials (with Material Type references)
 async function syncMaterials(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Materials',
     collectionId: WEBFLOW_COLLECTIONS.material,
     mappingKey: 'material',
     sanityQuery: `
-      *[_type == "material"] | order(name.en asc) {
+      *[_type == "material" ${filter}] | order(name.en asc) {
         _id,
         name,
         description,
@@ -1464,12 +1467,13 @@ async function syncMaterials(limit = null, progressCallback = null) {
 
 // PHASE 4: Sync other collections
 async function syncMediums(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Types',
     collectionId: WEBFLOW_COLLECTIONS.medium,
     mappingKey: 'medium',
     sanityQuery: `
-      *[_type == "medium"] | order(name.en asc) {
+      *[_type == "medium" ${filter}] | order(name.en asc) {
         _id,
         name,
         description,
@@ -1482,12 +1486,13 @@ async function syncMediums(limit = null, progressCallback = null) {
 }
 
 async function syncCategories(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Mediums',
     collectionId: WEBFLOW_COLLECTIONS.category,
     mappingKey: 'category',
     sanityQuery: `
-      *[_type == "category"] | order(title.en asc) {
+      *[_type == "category" ${filter}] | order(title.en asc) {
         _id,
         title,
         description,
@@ -1500,12 +1505,13 @@ async function syncCategories(limit = null, progressCallback = null) {
 }
 
 async function syncLocations(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Locations',
     collectionId: WEBFLOW_COLLECTIONS.location,
     mappingKey: 'location',
     sanityQuery: `
-      *[_type == "location"] | order(name.en asc) {
+      *[_type == "location" ${filter}] | order(name.en asc) {
         _id,
         name,
         type,
@@ -1526,6 +1532,7 @@ async function syncLocations(limit = null, progressCallback = null) {
 }
 
 async function syncCreators(limit = null, progressCallback = null) {
+  const filter = global.SINGLE_ITEM_FILTER || ''
   const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Creators',
@@ -1667,7 +1674,7 @@ async function syncArtworks(limit = null, progressCallback = null) {
     collectionId: WEBFLOW_COLLECTIONS.artwork,
     mappingKey: 'artwork',
     sanityQuery: `
-      *[_type == "artwork"] | order(name asc) {
+      *[_type == "artwork" ${filter}] | order(name asc) {
         _id,
         name,
         workTitle,
