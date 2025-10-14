@@ -1533,7 +1533,6 @@ async function syncLocations(limit = null, progressCallback = null) {
 
 async function syncCreators(limit = null, progressCallback = null) {
   const filter = global.SINGLE_ITEM_FILTER || ''
-  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Creators',
     collectionId: WEBFLOW_COLLECTIONS.creator,
