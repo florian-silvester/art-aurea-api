@@ -2075,12 +2075,15 @@ async function syncSingleItem(documentId, documentType, autoPublish = true) {
   // Load mappings
   await loadIdMappings()
   loadPersistentMappings()
-  await loadAssetMappings()
+  // Load asset mappings only when needed (artworks)
+  if (documentType === 'artwork') {
+    await loadAssetMappings()
+  }
   
   // Clean document ID (remove drafts prefix)
   const baseId = documentId.replace('drafts.', '')
   
-  // Temporarily set a global filter for single-item mode
+  // Temporarily set a global filter for single-item mode (will be overridden for deps)
   global.SINGLE_ITEM_FILTER = `&& (_id == "${baseId}" || _id == "drafts.${baseId}")`
   
   try {
@@ -2100,8 +2103,44 @@ async function syncSingleItem(documentId, documentType, autoPublish = true) {
     if (!syncFn) {
       throw new Error(`Unknown document type: ${documentType}`)
     }
-    
-    // Run the sync with limit=1
+
+    // For artworks, cascade sync dependencies first so references resolve
+    if (documentType === 'artwork') {
+      try {
+        // Fetch minimal refs for this artwork
+        const artworkRefs = await sanityClient.fetch(`
+          *[_id == "${baseId}" || _id == "drafts.${baseId}"][0]{
+            creator->{_id},
+            category->{_id},
+            materials[]->{_id},
+            medium[]->{_id},
+            finishes[]->{_id}
+          }
+        `)
+        const runWithId = async (id, fn) => {
+          if (!id) return
+          const prev = global.SINGLE_ITEM_FILTER
+          global.SINGLE_ITEM_FILTER = `&& (_id == "${id}" || _id == "drafts.${id}")`
+          try { await fn(1) } catch (e) { console.warn(`  ⚠️  Dep sync failed for ${id}: ${e.message}`) }
+          finally { global.SINGLE_ITEM_FILTER = prev }
+        }
+        if (artworkRefs?.category?._id) await runWithId(artworkRefs.category._id, syncCategories)
+        if (Array.isArray(artworkRefs?.materials)) {
+          for (const m of artworkRefs.materials) { await runWithId(m?._id, syncMaterials) }
+        }
+        if (Array.isArray(artworkRefs?.medium)) {
+          for (const t of artworkRefs.medium) { await runWithId(t?._id, syncMediums) }
+        }
+        if (Array.isArray(artworkRefs?.finishes)) {
+          for (const f of artworkRefs.finishes) { await runWithId(f?._id, syncFinishes) }
+        }
+        if (artworkRefs?.creator?._id) await runWithId(artworkRefs.creator._id, syncCreators)
+      } catch (e) {
+        console.warn(`  ⚠️  Failed to pre-sync artwork dependencies: ${e.message}`)
+      }
+    }
+
+    // Run the sync with limit=1 for the target document
     await syncFn(1)
     
     // Publish if requested
@@ -2136,7 +2175,9 @@ async function syncSingleItem(documentId, documentType, autoPublish = true) {
     
     // Save mappings
     await saveIdMappings()
-    await saveAssetMappings()
+    if (documentType === 'artwork') {
+      await saveAssetMappings()
+    }
     
     return {
       documentId: baseId,
