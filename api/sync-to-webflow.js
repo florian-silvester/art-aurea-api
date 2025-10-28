@@ -529,6 +529,9 @@ function mapLocationFields(sanityItem, locale = 'en') {
     name: isGerman ? (sanityItem.name?.de || sanityItem.name?.en || 'Untitled') : (sanityItem.name?.en || sanityItem.name?.de || 'Untitled'),
     slug: sanityItem.slug?.current || generateSlug(sanityItem.name?.en || sanityItem.name?.de),
     'location-type': mapLocationType(sanityItem.type),
+    'location-image': sanityItem.image?.asset?.url || null,
+    'country': sanityItem.country?.name?.en || sanityItem.country?.name?.de || '',
+    'city-location': sanityItem.city?.name?.en || sanityItem.city?.name?.de || '',
     website: sanityItem.website || '',
     email: sanityItem.email || ''
   }
@@ -538,7 +541,8 @@ function mapMediumFinishFields(sanityItem, locale = 'en') {
   const isGerman = locale === 'de-DE' || locale === 'de'
   return {
     name: isGerman ? (sanityItem.name?.de || sanityItem.name?.en || 'Untitled') : (sanityItem.name?.en || sanityItem.name?.de || 'Untitled'),
-    slug: sanityItem.slug?.current || generateSlug(sanityItem.name?.en || sanityItem.name?.de)
+    slug: sanityItem.slug?.current || generateSlug(sanityItem.name?.en || sanityItem.name?.de),
+    'sort-order': sanityItem.sortOrder || 0
   }
 }
 
@@ -1532,6 +1536,12 @@ async function syncLocations(limit = null, progressCallback = null) {
         _id,
         name,
         type,
+        image{
+          asset->{
+            _id,
+            url
+          }
+        },
         address,
         city->{name},
         country->{name},
@@ -1597,27 +1607,10 @@ async function syncArtworks(limit = null, progressCallback = null) {
   // Custom artwork mapper with image handling
   const artworkCustomSync = async (item) => {
     // Simple URL-based image handling - let Webflow handle uploads
-    const artworkImages = item.images?.map(image => {
-      if (!image.asset?.url) return null
-      
-      // Create enhanced alt text
-      const altText = image.alt?.en || image.alt?.de || ''
-      const artworkName = item.name || item.workTitle?.en || item.workTitle?.de
-      const creatorName = item.creator?.name
-      
-      let enhancedAltText = altText
-      if (!enhancedAltText && artworkName) {
-        const parts = []
-        if (creatorName) parts.push(creatorName)
-        if (artworkName) parts.push(artworkName)
-        enhancedAltText = parts.join(' - ')
-      }
-      
-      return {
-        url: image.asset.url,
-        alt: enhancedAltText || artworkName || 'Artwork image'
-      }
-    }).filter(Boolean) || []
+    // Map artwork images - just URLs, Webflow doesn't accept {url, alt} objects
+    const artworkImages = (item.images || [])
+      .map(image => image.asset?.url)
+      .filter(Boolean)
     
     console.log(`  🖼️  Prepared ${artworkImages.length} images for upload via URLs`)
     
@@ -1656,11 +1649,8 @@ async function syncArtworks(limit = null, progressCallback = null) {
       return mappedId
     }).filter(Boolean) || []
     
-    // NEW: map single main image if present
-    const mainImage = item.mainImage?.asset?.url ? {
-      url: item.mainImage.asset.url,
-      alt: (item.mainImage?.alt?.en || item.mainImage?.alt?.de || item.name || item.workTitle?.en || item.workTitle?.de || 'Main image')
-    } : undefined
+    // Map main image - just URL, not object
+    const mainImage = item.mainImage?.asset?.url || null
 
     // Note: customImageSync doesn't support locale parameter yet, always returns English
     // German locale will be updated separately after creation
@@ -1678,7 +1668,7 @@ async function syncArtworks(limit = null, progressCallback = null) {
         'size-dimensions': item.size || '',
         year: item.year || '',
         price: item.price || '',
-        ...(mainImage ? { 'main-image': mainImage } : {}),
+        'main-image': mainImage,
         'artwork-images': artworkImages
       },
       _sanityItem: item // Store for German locale update
