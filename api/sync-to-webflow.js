@@ -1259,6 +1259,8 @@ async function syncCollection(options, progressCallback = null) {
       // Existing item - check if update is needed via delta hash
       const mapped = { ...mappedFieldsForId }
       delete mapped.slug // Don't change slug on update to avoid conflicts
+      delete mapped.works // Don't touch works - managed by populateCreatorWorks()
+      delete mapped.featured // Don't touch featured - managed separately
       const webflowItem = { fieldData: mapped }
       const hash = hashObjectStable(webflowItem.fieldData)
       const key = `${mappingKey}:${item._id}`
