@@ -494,26 +494,21 @@ function mapCreatorFields(sanityItem, locale = 'en') {
     'name': sanityItem.name || 'Untitled',
     'last-name': sanityItem.lastName || '',
     'slug': sanityItem.slug?.current || generateSlug(sanityItem.name),
-    'hero-image': (sanityItem.cover?.asset?.url ? {
-      url: sanityItem.cover.asset.url,
-      alt: (sanityItem.cover?.alt?.en || sanityItem.cover?.alt?.de || sanityItem.name || '')
-    } : undefined),
-    'profile-image': (sanityItem.image?.asset?.url ? {
-      url: sanityItem.image.asset.url,
-      alt: (sanityItem.image?.alt?.en || sanityItem.image?.alt?.de || sanityItem.name || '')
-    } : undefined),
-    'gallery-images': (sanityItem.galleryImages || []).map(img => ({
-      url: img.asset?.url,
-      alt: img.alt?.en || img.alt?.de || sanityItem.name || ''
-    })).filter(img => img.url),
-    'studio-images': (sanityItem.studioImages || []).map(img => ({
-      url: img.asset?.url,
-      alt: img.alt?.en || img.alt?.de || sanityItem.name || ''
-    })).filter(img => img.url),
+    'hero-image': sanityItem.cover?.asset?.url || null,
+    'profile-image': sanityItem.image?.asset?.url || null,
+    'gallery-images': (sanityItem.galleryImages || [])
+      .map(img => img.asset?.url)
+      .filter(Boolean),
+    'studio-images': (sanityItem.studioImages || [])
+      .map(img => img.asset?.url)
+      .filter(Boolean),
     'website': sanityItem.website || '',
     'email': sanityItem.email || '',
     'birth-year': sanityItem.birthYear ? parseInt(sanityItem.birthYear, 10) : null,
-    'category': sanityItem.category?._ref ? idMappings.category.get(sanityItem.category._ref) || null : null
+    'category': sanityItem.category?._ref ? idMappings.category.get(sanityItem.category._ref) || null : null,
+    'locations': (sanityItem.associatedLocations || [])
+      .map(loc => loc._ref ? idMappings.location.get(loc._ref) : null)
+      .filter(Boolean)
   }
 
   // Locale-specific fields
