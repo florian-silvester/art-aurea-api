@@ -496,8 +496,7 @@ function mapCreatorFields(sanityItem, locale = 'en') {
     'slug': sanityItem.slug?.current || generateSlug(sanityItem.name),
     'hero-image': sanityItem.cover?.asset?.url || null,
     'profile-image': sanityItem.image?.asset?.url || null,
-    'gallery-images': sanityItem.galleryImage?.asset?.url ? [sanityItem.galleryImage.asset.url] : [],
-    'studio-images': sanityItem.studioImage?.asset?.url ? [sanityItem.studioImage.asset.url] : [],
+    'portrait-image': sanityItem.portraitImage?.asset?.url || null,
     'website': sanityItem.website || '',
     'email': sanityItem.email || '',
     'birth-year': sanityItem.birthYear ? parseInt(sanityItem.birthYear, 10) : null,
@@ -1579,15 +1578,7 @@ async function syncCreators(limit = null, progressCallback = null) {
         portrait,
         nationality,
         specialties,
-        galleryImage{
-          asset->{
-            _id,
-            url,
-            originalFilename
-          },
-          alt
-        },
-        studioImage{
+        portraitImage{
           asset->{
             _id,
             url,
