@@ -496,6 +496,7 @@ function mapCreatorFields(sanityItem, locale = 'en') {
     'slug': sanityItem.slug?.current || generateSlug(sanityItem.name),
     'hero-image': sanityItem.cover?.asset?.url || null,
     'profile-image': sanityItem.image?.asset?.url || null,
+    'studio-image': sanityItem.studioImage?.asset?.url || null,
     'portrait-image': sanityItem.portraitImage?.asset?.url || null,
     'website': sanityItem.website || '',
     'email': sanityItem.email || '',
@@ -1578,6 +1579,14 @@ async function syncCreators(limit = null, progressCallback = null) {
         portrait,
         nationality,
         specialties,
+        studioImage{
+          asset->{
+            _id,
+            url,
+            originalFilename
+          },
+          alt
+        },
         portraitImage{
           asset->{
             _id,
