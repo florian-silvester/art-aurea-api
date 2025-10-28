@@ -58,7 +58,7 @@ function getArg(name) {
 }
 const FLAG_QUICK = ARGS.includes('--quick')
 const FLAG_CHECK_ONLY = ARGS.includes('--check-only')
-const FLAG_PUBLISH = ARGS.includes('--publish')
+const FLAG_PUBLISH = true // ALWAYS publish items to Webflow after sync
 const ARG_ONLY = getArg('only') // e.g. --only=creator|artwork|material
 const ARG_ITEM = getArg('item') // e.g. --item=creator-id-123 (single item sync)
 const FLAG_ENGLISH_ONLY = ARGS.includes('--english-only')
@@ -1207,15 +1207,8 @@ async function syncCollection(options, progressCallback = null) {
       }
     }
 
-    // If no ID, try to adopt by slug
-    if (!existingId && mappedFieldsForId?.slug) {
-      const adopt = webflowBySlug.get(mappedFieldsForId.slug)
-      if (adopt?.id) {
-        existingId = adopt.id
-        idMappings[mappingKey].set(item._id, existingId)
-        console.log(`  ↳ Adopted existing item by slug for ${mappingKey}:${item._id} → ${existingId}`)
-      }
-    }
+    // REMOVED: Slug-based adoption fallback (causes duplicates)
+    // Now using pure ID-based sync only
 
     if (!existingId) {
       // New item - prepare for creation with both EN and DE content
@@ -1398,7 +1391,6 @@ async function syncCollection(options, progressCallback = null) {
 
 // PHASE 1: Sync Material Types
 async function syncMaterialTypes(limit = null, progressCallback = null) {
-  const filter = global.SINGLE_ITEM_FILTER || ''
   const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Material Types',
@@ -1669,6 +1661,7 @@ async function syncArtworks(limit = null, progressCallback = null) {
     }
   }
 
+  const filter = global.SINGLE_ITEM_FILTER || ''
   return syncCollection({
     name: 'Artworks',
     collectionId: WEBFLOW_COLLECTIONS.artwork,
@@ -2063,127 +2056,63 @@ async function performCompleteSync(progressCallback = null, options = {}) {
   }
 }
 
-// Single item sync function
+// ═══════════════════════════════════════════════════════════════════════════════
+// SINGLE ITEM SYNC
+// ═══════════════════════════════════════════════════════════════════════════════
 async function syncSingleItem(documentId, documentType, autoPublish = true) {
-  console.log(`📋 Syncing single ${documentType}: ${documentId}`)
+  console.log(`\n🔍 Syncing single item: ${documentType}/${documentId}`)
   
-  // Initialize collections and locales
-  if (!WEBFLOW_COLLECTIONS) {
-    WEBFLOW_COLLECTIONS = await resolveWebflowCollections()
-  }
+  // Initialize
+  WEBFLOW_COLLECTIONS = await resolveWebflowCollections()
   await resolveWebflowLocales()
-  
-  // Load mappings
   await loadIdMappings()
   loadPersistentMappings()
-  // Load asset mappings only when needed (artworks)
-  if (documentType === 'artwork') {
-    await loadAssetMappings()
-  }
   
-  // Clean document ID (remove drafts prefix)
+  // Set global filter for targeted query
   const baseId = documentId.replace('drafts.', '')
-  
-  // Temporarily set a global filter for single-item mode (will be overridden for deps)
   global.SINGLE_ITEM_FILTER = `&& (_id == "${baseId}" || _id == "drafts.${baseId}")`
   
   try {
     // Map document type to sync function
     const syncFunctions = {
-      'creator': syncCreators,
-      'artwork': syncArtworks,
-      'category': syncCategories,
-      'medium': syncMediums,
-      'material': syncMaterials,
-      'materialType': syncMaterialTypes,
-      'finish': syncFinishes,
-      'location': syncLocations
+      creator: () => syncCreators(1),
+      artwork: () => syncArtworks(1),
+      category: () => syncCategories(1),
+      medium: () => syncMediums(1),
+      material: () => syncMaterials(1),
+      materialType: () => syncMaterialTypes(1),
+      finish: () => syncFinishes(1),
+      location: () => syncLocations(1)
     }
     
     const syncFn = syncFunctions[documentType]
     if (!syncFn) {
-      throw new Error(`Unknown document type: ${documentType}`)
+      throw new Error(`Unsupported document type: ${documentType}`)
     }
-
-    // For artworks, cascade sync dependencies first so references resolve
-    if (documentType === 'artwork') {
-      try {
-        // Fetch minimal refs for this artwork
-        const artworkRefs = await sanityClient.fetch(`
-          *[_id == "${baseId}" || _id == "drafts.${baseId}"][0]{
-            creator->{_id},
-            category->{_id},
-            materials[]->{_id},
-            medium[]->{_id},
-            finishes[]->{_id}
-          }
-        `)
-        const runWithId = async (id, fn) => {
-          if (!id) return
-          const prev = global.SINGLE_ITEM_FILTER
-          global.SINGLE_ITEM_FILTER = `&& (_id == "${id}" || _id == "drafts.${id}")`
-          try { await fn(1) } catch (e) { console.warn(`  ⚠️  Dep sync failed for ${id}: ${e.message}`) }
-          finally { global.SINGLE_ITEM_FILTER = prev }
-        }
-        if (artworkRefs?.category?._id) await runWithId(artworkRefs.category._id, syncCategories)
-        if (Array.isArray(artworkRefs?.materials)) {
-          for (const m of artworkRefs.materials) { await runWithId(m?._id, syncMaterials) }
-        }
-        if (Array.isArray(artworkRefs?.medium)) {
-          for (const t of artworkRefs.medium) { await runWithId(t?._id, syncMediums) }
-        }
-        if (Array.isArray(artworkRefs?.finishes)) {
-          for (const f of artworkRefs.finishes) { await runWithId(f?._id, syncFinishes) }
-        }
-        if (artworkRefs?.creator?._id) await runWithId(artworkRefs.creator._id, syncCreators)
-      } catch (e) {
-        console.warn(`  ⚠️  Failed to pre-sync artwork dependencies: ${e.message}`)
-      }
-    }
-
-    // Run the sync with limit=1 for the target document
-    await syncFn(1)
+    
+    // Run the sync for this single item
+    await syncFn()
     
     // Publish if requested
     if (autoPublish) {
-      const collectionIds = {
-        'creator': WEBFLOW_COLLECTIONS.creator,
-        'artwork': WEBFLOW_COLLECTIONS.artwork,
-        'category': WEBFLOW_COLLECTIONS.category,
-        'medium': WEBFLOW_COLLECTIONS.medium,
-        'material': WEBFLOW_COLLECTIONS.material,
-        'materialType': WEBFLOW_COLLECTIONS.materialType,
-        'finish': WEBFLOW_COLLECTIONS.finish,
-        'location': WEBFLOW_COLLECTIONS.location
-      }
-      
-      const mappingKeys = {
-        'creator': 'creator',
-        'artwork': 'artwork',
-        'category': 'category',
-        'medium': 'medium',
-        'material': 'material',
-        'materialType': 'materialType',
-        'finish': 'finish',
-        'location': 'location'
-      }
-      
-      const webflowId = idMappings[mappingKeys[documentType]].get(baseId)
-      if (webflowId) {
-        await publishWebflowItems(collectionIds[documentType], [webflowId])
+      const collectionId = WEBFLOW_COLLECTIONS[documentType]
+      if (collectionId && ID_MAPPINGS[documentType]) {
+        const webflowId = ID_MAPPINGS[documentType][baseId]
+        if (webflowId) {
+          console.log(`📤 Publishing ${documentType}/${baseId} (${webflowId})`)
+          await publishWebflowItems(collectionId, [webflowId])
+        }
       }
     }
     
     // Save mappings
     await saveIdMappings()
-    if (documentType === 'artwork') {
-      await saveAssetMappings()
-    }
+    savePersistentMappings()
     
     return {
       documentId: baseId,
       documentType,
-      synced: true,
+      webflowId: ID_MAPPINGS[documentType]?.[baseId],
       published: autoPublish
     }
   } finally {
@@ -2249,11 +2178,10 @@ module.exports = async function handler(req, res) {
       throw new Error('WEBFLOW_API_TOKEN environment variable is required')
     }
     
-    // Check for single-item sync mode
-    const { documentId, documentType, syncType, autoPublish, streaming, limit, limitPerCollection } = req.body || {}
+    // Check for single-item sync
+    const { syncType, documentId, documentType, autoPublish, streaming, limit, limitPerCollection } = req.body || {}
     
     if (syncType === 'single-item' && documentId && documentType) {
-      // SINGLE ITEM SYNC MODE
       console.log(`🔔 Single item sync: ${documentType}/${documentId}`)
       const result = await syncSingleItem(documentId, documentType, autoPublish !== false)
       return res.status(200).json({
@@ -2263,7 +2191,7 @@ module.exports = async function handler(req, res) {
       })
     }
     
-    // FULL SYNC MODE
+    // Check if client wants streaming progress and optional limit
     const limitValue = Number.isFinite(Number(limitPerCollection)) ? Number(limitPerCollection) : (Number.isFinite(Number(limit)) ? Number(limit) : (process.env.LIMIT_PER_COLLECTION ? Number(process.env.LIMIT_PER_COLLECTION) : null))
     
     if (streaming) {
