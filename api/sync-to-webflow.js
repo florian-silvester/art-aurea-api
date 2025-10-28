@@ -890,6 +890,22 @@ async function getWebflowItems(collectionId) {
   }
 }
 
+// Find single Webflow item by slug (efficient for single-item sync)
+async function findWebflowItemBySlug(collectionId, slug) {
+  try {
+    const result = await webflowRequest(
+      `/collections/${collectionId}/items?limit=1&offset=0`
+    )
+    const items = result.items || []
+    // Filter by slug client-side since Webflow API doesn't support slug filtering
+    const match = items.find(item => item.fieldData?.slug === slug)
+    return match || null
+  } catch (error) {
+    console.error(`Failed to find item by slug:`, error.message)
+    return null
+  }
+}
+
 // Clear existing items from a collection
 async function clearWebflowCollection(collectionId, collectionName) {
   console.log(`  🧹 Clearing existing ${collectionName}...`)
@@ -1162,12 +1178,17 @@ async function syncCollection(options, progressCallback = null) {
   
   console.log(`  • Total Sanity items: ${sanityData.length}`)
   
-  // Get existing Webflow items for adoption logic
-  const existingWebflowItems = await getWebflowItems(collectionId)
+  // Skip expensive Webflow fetching for single-item sync
+  const isSingleItemSync = !!global.SINGLE_ITEM_FILTER
+  const existingWebflowItems = isSingleItemSync ? [] : await getWebflowItems(collectionId)
   const webflowBySlug = new Map()
   for (const wfItem of existingWebflowItems) {
     const slug = wfItem?.fieldData?.slug
     if (slug) webflowBySlug.set(slug, wfItem)
+  }
+  
+  if (isSingleItemSync) {
+    console.log(`  ⚡ Single-item sync mode: skipping Webflow fetch & verification`)
   }
   
   // Process items and check for duplicates
@@ -1192,8 +1213,8 @@ async function syncCollection(options, progressCallback = null) {
       continue
     }
 
-    // Verify webflowId still exists, clear if stale
-    if (existingId) {
+    // Verify webflowId still exists, clear if stale (skip for single-item sync)
+    if (existingId && !isSingleItemSync) {
       try {
         await webflowRequest(`/collections/${collectionId}/items/${existingId}`)
       } catch (error) {
