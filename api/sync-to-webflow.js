@@ -1354,17 +1354,9 @@ async function syncCollection(options, progressCallback = null) {
   for (let i = 0; i < updateItems.length; i++) {
     const u = updateItems[i]
     try {
-      // DEBUG: Check what we're sending for Tora Urup
-      if (u.item.name === 'Tora Urup') {
-        console.log(`\n🐛 DEBUG Tora Urup PRIMARY locale update:`)
-        console.log(`   fieldMapper(item, 'en') returns:`)
-        const testEn = fieldMapper(u.item, 'en')
-        console.log(`   Portrait: ${testEn['portrait-english']?.substring(0,60)}...`)
-        console.log(`   Biography: ${testEn['biography']?.substring(0,60)}...`)
-        console.log(`\n   u.webflowItem.fieldData contains:`)
-        console.log(`   Portrait: ${u.webflowItem.fieldData['portrait-english']?.substring(0,60)}...`)
-        console.log(`   Biography: ${u.webflowItem.fieldData['biography']?.substring(0,60)}...`)
-      }
+      // DEBUG: Log what we're sending
+      console.log(`\n🐛 DEBUG ${u.item.name || u.item._id}:`)
+      console.log(`   Sending to Webflow:`, JSON.stringify(u.webflowItem.fieldData, null, 2))
       
       // Update primary locale with English content
       await updateWebflowItem(collectionId, u.webflowId, u.webflowItem.fieldData, FLAG_ENGLISH_ONLY ? null : WEBFLOW_LOCALES['en-US'])
@@ -1589,7 +1581,23 @@ async function syncCreators(limit = null, progressCallback = null) {
         portrait,
         nationality,
         specialties,
-        galleryImages,
+        galleryImages[]{
+          asset->{
+            _id,
+            url,
+            originalFilename
+          },
+          alt
+        },
+        studioImages[]{
+          asset->{
+            _id,
+            url,
+            originalFilename
+          },
+          alt
+        },
+        associatedLocations[]->{_id},
         slug,
         website,
         email,
