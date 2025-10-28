@@ -506,6 +506,10 @@ function mapCreatorFields(sanityItem, locale = 'en') {
       url: img.asset?.url,
       alt: img.alt?.en || img.alt?.de || sanityItem.name || ''
     })).filter(img => img.url),
+    'studio-images': (sanityItem.studioImages || []).map(img => ({
+      url: img.asset?.url,
+      alt: img.alt?.en || img.alt?.de || sanityItem.name || ''
+    })).filter(img => img.url),
     'website': sanityItem.website || '',
     'email': sanityItem.email || '',
     'birth-year': sanityItem.birthYear ? parseInt(sanityItem.birthYear, 10) : null,
