@@ -1247,11 +1247,10 @@ async function syncCollection(options, progressCallback = null) {
         germanFieldData: null // Will be populated below if German content exists
       }
       
-      // Prepare German-specific field data if item has DE locale content
-      if (fieldMapper.length > 1) {
-        // fieldMapper accepts (item, locale) - get German fields
+      // Prepare German-specific field data
+      if (fieldMapper && typeof fieldMapper === 'function') {
         try {
-          const germanFields = fieldMapper(item, 'de')
+          const germanFields = fieldMapper(item, 'de-DE')
           if (germanFields && Object.keys(germanFields).length > 0) {
             webflowItem.germanFieldData = germanFields
           }
