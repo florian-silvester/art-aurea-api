@@ -1230,8 +1230,15 @@ async function syncCollection(options, progressCallback = null) {
       }
     }
 
-    // REMOVED: Slug-based adoption fallback (causes duplicates)
-    // Now using pure ID-based sync only
+    // Try to adopt existing Webflow item by slug (if no ID mapping exists)
+    if (!existingId && mappedFieldsForId?.slug && !isSingleItemSync) {
+      const adopt = webflowBySlug.get(mappedFieldsForId.slug)
+      if (adopt?.id) {
+        existingId = adopt.id
+        idMappings[mappingKey].set(item._id, existingId)
+        console.log(`  ↳ Adopted existing item by slug: ${mappingKey}:${item._id} → ${existingId}`)
+      }
+    }
 
     if (!existingId) {
       // New item - prepare for creation with both EN and DE content
