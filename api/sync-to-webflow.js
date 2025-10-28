@@ -728,20 +728,34 @@ async function createWebflowItems(collectionId, items, progressCallback = null) 
         })
       }
       
-      // Step 2: Update DE locale with German-specific content if available
-      // (The bulk create uses EN content by default, now we patch DE)
-      if (item.germanFieldData) {
-        try {
-          await webflowRequest(`/collections/${collectionId}/items/${createdItem.id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({
-              cmsLocaleId: WEBFLOW_LOCALES['de-DE'],
-              fieldData: item.germanFieldData
+      // Step 2: ALWAYS update DE locale with German content (bulk create uses EN for both)
+      // Retry up to 3 times to ensure DE gets proper content
+      if (item.germanFieldData || true) {
+        const germanData = item.germanFieldData || item.fieldData // Fallback to EN fields if no German
+        let attempt = 0
+        let deSuccess = false
+        
+        while (attempt < 3 && !deSuccess) {
+          try {
+            await sleep(1000) // Rate limit delay
+            await webflowRequest(`/collections/${collectionId}/items/${createdItem.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                cmsLocaleId: WEBFLOW_LOCALES['de-DE'],
+                fieldData: germanData
+              })
             })
-          })
-          console.log(`  🇩🇪 Updated German content`)
-        } catch (deError) {
-          console.warn(`  ⚠️  Failed to update DE locale: ${deError.message}`)
+            console.log(`  🇩🇪 Updated German locale`)
+            deSuccess = true
+          } catch (deError) {
+            attempt++
+            console.warn(`  ⚠️  DE locale attempt ${attempt}/3 failed: ${deError.message}`)
+            if (attempt < 3) await sleep(2000)
+          }
+        }
+        
+        if (!deSuccess) {
+          console.error(`  ❌ Failed to update DE locale after 3 attempts`)
         }
       }
       
@@ -1332,18 +1346,13 @@ async function syncCollection(options, progressCallback = null) {
       persistentHashes.set(`${mappingKey}:${sanityItem._id}`, hash)
       
       // Update/create both locales for newly created items
+      console.log(`  🔧 Post-create locale update for ${sanityItem.name || sanityItem._id}`)
       if (fieldMapper && webflowItem.id) {
-        // Update primary (EN) locale
-        const primaryFields = fieldMapper(sanityItem, 'en')
-        if (!FLAG_ENGLISH_ONLY) {
-          await updateWebflowItem(collectionId, webflowItem.id, primaryFields, WEBFLOW_LOCALES['en-US'])
-        }
-        
-        // Create/update German locale (skip if english-only)
-        if (!FLAG_ENGLISH_ONLY) {
-          await sleep(800) // Delay between locale updates
-          await updateItemGermanLocale(collectionId, webflowItem.id, sanityItem, fieldMapper)
-        }
+        // Create/update German locale
+        await sleep(800)
+        await updateItemGermanLocale(collectionId, webflowItem.id, sanityItem, fieldMapper)
+      } else {
+        console.log(`  ⚠️  Skipping locale update: fieldMapper=${!!fieldMapper}, id=${!!webflowItem.id}`)
       }
     }
   }
