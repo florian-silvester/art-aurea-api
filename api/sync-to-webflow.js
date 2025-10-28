@@ -1442,6 +1442,7 @@ async function syncFinishes(limit = null, progressCallback = null) {
         _id,
         name,
         description,
+        sortOrder,
         slug
       }
     `,
@@ -1490,6 +1491,7 @@ async function syncMediums(limit = null, progressCallback = null) {
         _id,
         name,
         description,
+        sortOrder,
         slug
       }
     `,
