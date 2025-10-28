@@ -2072,6 +2072,11 @@ async function syncSingleItem(documentId, documentType, autoPublish = true) {
   const baseId = documentId.replace('drafts.', '')
   global.SINGLE_ITEM_FILTER = `&& (_id == "${baseId}" || _id == "drafts.${baseId}")`
   
+  // FORCE UPDATE: Clear hash for this item to ensure it updates
+  const hashKey = `${documentType}:${baseId}`
+  persistentHashes.delete(hashKey)
+  console.log(`  🔄 Cleared hash for ${hashKey} to force update`)
+  
   try {
     // Map document type to sync function
     const syncFunctions = {
@@ -2091,29 +2096,29 @@ async function syncSingleItem(documentId, documentType, autoPublish = true) {
     }
     
     // Run the sync for this single item
-    await syncFn()
+    const syncResult = await syncFn()
+    console.log(`  ✅ Sync completed: ${syncResult} items processed`)
     
-    // Publish if requested
-    if (autoPublish) {
-      const collectionId = WEBFLOW_COLLECTIONS[documentType]
-      if (collectionId && ID_MAPPINGS[documentType]) {
-        const webflowId = ID_MAPPINGS[documentType][baseId]
-        if (webflowId) {
-          console.log(`📤 Publishing ${documentType}/${baseId} (${webflowId})`)
-          await publishWebflowItems(collectionId, [webflowId])
-        }
-      }
+    // Publish if requested (FLAG_PUBLISH is now always true)
+    const collectionId = WEBFLOW_COLLECTIONS[documentType]
+    const webflowId = idMappings[documentType]?.get(baseId)
+    
+    if (webflowId && collectionId) {
+      console.log(`  📤 Publishing ${documentType}/${baseId} (${webflowId})`)
+      await publishWebflowItems(collectionId, [webflowId])
+    } else {
+      console.log(`  ⚠️  No webflowId found for ${documentType}:${baseId}`)
     }
     
     // Save mappings
     await saveIdMappings()
-    savePersistentMappings()
     
     return {
       documentId: baseId,
       documentType,
-      webflowId: ID_MAPPINGS[documentType]?.[baseId],
-      published: autoPublish
+      webflowId: webflowId,
+      published: true,
+      success: true
     }
   } finally {
     // Clean up global filter
