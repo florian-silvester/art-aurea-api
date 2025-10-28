@@ -660,8 +660,7 @@ async function updateItemGermanLocale(collectionId, itemId, sanityItem, fieldMap
       germanFields['description'] = actualItem.description?.de || ''
     }
     
-    // With Advanced Localization, use POST with id + cmsLocaleId to create/update DE locale
-    // This works whether the DE locale exists or not
+    // Use POST to /items with id + cmsLocaleId to create/update DE locale on existing item
     const result = await webflowRequest(`/collections/${collectionId}/items`, {
       method: 'POST',
       body: JSON.stringify({
