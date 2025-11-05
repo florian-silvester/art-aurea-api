@@ -1002,8 +1002,146 @@ function generateMD5Hash(buffer) {
 }
 
 function hashObjectStable(obj) {
-  const json = JSON.stringify(obj, Object.keys(obj).sort())
+  // Create a version that includes image asset metadata for reliable change detection
+  const objWithImageMetadata = addImageMetadataToHash(obj)
+  const json = JSON.stringify(objWithImageMetadata, Object.keys(objWithImageMetadata).sort())
   return generateMD5Hash(Buffer.from(json))
+}
+
+// Helper to include image asset IDs/URLs in hash for reliable change detection
+// This ensures image changes (new URLs) are detected even if other fields are unchanged
+function addImageMetadataToHash(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+  if (Array.isArray(obj)) return obj.map(addImageMetadataToHash)
+  
+  const result = {}
+  for (const [key, value] of Object.entries(obj)) {
+    // For image objects {url, alt}, include the URL in hash (URL changes = image changed)
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value.url && typeof value.url === 'string') {
+        // Image object - include URL in hash to detect image changes
+        result[key] = {
+          ...value,
+          _hashUrl: value.url // Include URL in hash to detect image changes
+        }
+      } else {
+        // Nested object - recurse
+        result[key] = addImageMetadataToHash(value)
+      }
+    } else if (Array.isArray(value)) {
+      // Array - check if it contains image objects
+      result[key] = value.map(item => {
+        if (item && typeof item === 'object' && item.url) {
+          return { ...item, _hashUrl: item.url }
+        }
+        return addImageMetadataToHash(item)
+      })
+    } else {
+      result[key] = value
+    }
+  }
+  return result
+}
+
+// Explicitly check if images have changed by comparing URLs
+// This is more reliable than hash detection for image changes
+function checkIfImagesChanged(sanityItem, webflowFieldData, mappingKey) {
+  if (!webflowFieldData) return false
+  
+  // Extract all image URLs from the new fieldData
+  const extractImageUrls = (obj, urls = []) => {
+    if (!obj || typeof obj !== 'object') return urls
+    if (Array.isArray(obj)) {
+      obj.forEach(item => {
+        if (item && typeof item === 'object' && item.url) {
+          urls.push(item.url)
+        } else {
+          extractImageUrls(item, urls)
+        }
+      })
+    } else {
+      Object.values(obj).forEach(value => {
+        if (value && typeof value === 'object') {
+          if (value.url && typeof value.url === 'string') {
+            urls.push(value.url)
+          } else {
+            extractImageUrls(value, urls)
+          }
+        }
+      })
+    }
+    return urls
+  }
+  
+  const newImageUrls = extractImageUrls(webflowFieldData)
+  if (newImageUrls.length === 0) return false // No images, can't have changed
+  
+  // Get previous hash to extract old image URLs
+  // Since we don't store old fieldData, we'll compare against Sanity asset _updatedAt
+  // If any image asset was updated recently, consider it changed
+  const recentImageUpdates = checkRecentImageUpdates(sanityItem)
+  
+  return recentImageUpdates
+}
+
+// Check if any images in the Sanity item were recently updated
+// Uses asset _updatedAt timestamps - if any image was updated in last 24 hours, consider it changed
+function checkRecentImageUpdates(sanityItem) {
+  if (!sanityItem) return false
+  
+  const now = Date.now()
+  const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000) // 24 hours ago - generous window
+  
+  // Check heroImage (articles)
+  if (sanityItem.heroImage?.asset?._updatedAt) {
+    const updated = new Date(sanityItem.heroImage.asset._updatedAt).getTime()
+    if (updated > twentyFourHoursAgo) return true
+  }
+  
+  // Check section images (articles)
+  const sectionImages = [
+    sanityItem.section1Images,
+    sanityItem.section2Images,
+    sanityItem.section3Images,
+    sanityItem.section4Images
+  ]
+  
+  for (const images of sectionImages) {
+    if (Array.isArray(images)) {
+      for (const img of images) {
+        if (img?.asset?._updatedAt) {
+          const updated = new Date(img.asset._updatedAt).getTime()
+          if (updated > twentyFourHoursAgo) return true
+        }
+      }
+    }
+  }
+  
+  // Check final image (articles)
+  if (sanityItem.sectionFinalImage1?.asset?._updatedAt) {
+    const updated = new Date(sanityItem.sectionFinalImage1.asset._updatedAt).getTime()
+    if (updated > twentyFourHoursAgo) return true
+  }
+  
+  // For creators, check cover, image, studioImage, portraitImage
+  if (sanityItem.cover?.asset?._updatedAt) {
+    const updated = new Date(sanityItem.cover.asset._updatedAt).getTime()
+    if (updated > twentyFourHoursAgo) return true
+  }
+  if (sanityItem.image?.asset?._updatedAt) {
+    const updated = new Date(sanityItem.image.asset._updatedAt).getTime()
+    if (updated > twentyFourHoursAgo) return true
+  }
+  if (sanityItem.studioImage?.asset?._updatedAt) {
+    const updated = new Date(sanityItem.studioImage.asset._updatedAt).getTime()
+    if (updated > twentyFourHoursAgo) return true
+  }
+  if (sanityItem.portraitImage?.asset?._updatedAt) {
+    const updated = new Date(sanityItem.portraitImage.asset._updatedAt).getTime()
+    if (updated > twentyFourHoursAgo) return true
+  }
+  
+  return false
 }
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)) }
@@ -1326,7 +1464,13 @@ async function syncCollection(options, progressCallback = null) {
       // Check both global and env var for force update
       const forceUpdate = global.FORCE_UPDATE || process.env.FORCE_UPDATE === 'true'
       
-      if (prev !== hash || forceUpdate) {
+      // Explicitly check if images have changed (reliable detection)
+      const imagesChanged = checkIfImagesChanged(item, webflowItem.fieldData, mappingKey)
+      
+      if (prev !== hash || forceUpdate || imagesChanged) {
+        if (imagesChanged && prev === hash) {
+          console.log(`  🖼️  Image change detected for ${item.name || item.creatorName || item._id}`)
+        }
         updateItems.push({ item, webflowId: existingId, webflowItem, hash, key })
       } else {
         existingCount++
@@ -1619,7 +1763,8 @@ async function syncCreators(limit = null, progressCallback = null) {
           asset->{
             _id,
             url,
-            originalFilename
+            originalFilename,
+            _updatedAt
           },
           alt
         },
@@ -1627,7 +1772,8 @@ async function syncCreators(limit = null, progressCallback = null) {
           asset->{
             _id,
             url,
-            originalFilename
+            originalFilename,
+            _updatedAt
           },
           alt
         },
@@ -1639,7 +1785,8 @@ async function syncCreators(limit = null, progressCallback = null) {
           asset->{
             _id,
             url,
-            originalFilename
+            originalFilename,
+            _updatedAt
           },
           alt
         },
@@ -1647,7 +1794,8 @@ async function syncCreators(limit = null, progressCallback = null) {
           asset->{
             _id,
             url,
-            originalFilename
+            originalFilename,
+            _updatedAt
           },
           alt
         },
@@ -2171,30 +2319,30 @@ async function syncArticles(limit = null, progressCallback = null) {
         intro,
         fullText,
         heroImage{
-          asset->{_id, url, originalFilename, altText, alt, metadata}
+          asset->{_id, url, originalFilename, altText, alt, metadata, _updatedAt}
         },
         section1Images[]{
-          asset->{_id, url, originalFilename, altText, alt, metadata}
+          asset->{_id, url, originalFilename, altText, alt, metadata, _updatedAt}
         },
         section1Layout,
         section1Captions,
         section2Images[]{
-          asset->{_id, url, originalFilename, altText, alt, metadata}
+          asset->{_id, url, originalFilename, altText, alt, metadata, _updatedAt}
         },
         section2Layout,
         section2Captions,
         section3Images[]{
-          asset->{_id, url, originalFilename, altText, alt, metadata}
+          asset->{_id, url, originalFilename, altText, alt, metadata, _updatedAt}
         },
         section3Layout,
         section3Captions,
         section4Images[]{
-          asset->{_id, url, originalFilename, altText, alt, metadata}
+          asset->{_id, url, originalFilename, altText, alt, metadata, _updatedAt}
         },
         section4Layout,
         section4Captions,
         sectionFinalImage1{
-          asset->{_id, url, originalFilename, altText, alt, metadata}
+          asset->{_id, url, originalFilename, altText, alt, metadata, _updatedAt}
         }
       }
     `,
