@@ -1043,105 +1043,58 @@ function addImageMetadataToHash(obj) {
   return result
 }
 
-// Explicitly check if images have changed by comparing URLs
-// This is more reliable than hash detection for image changes
-function checkIfImagesChanged(sanityItem, webflowFieldData, mappingKey) {
-  if (!webflowFieldData) return false
-  
-  // Extract all image URLs from the new fieldData
-  const extractImageUrls = (obj, urls = []) => {
-    if (!obj || typeof obj !== 'object') return urls
-    if (Array.isArray(obj)) {
-      obj.forEach(item => {
-        if (item && typeof item === 'object' && item.url) {
-          urls.push(item.url)
+// Extract all image URLs from fieldData (for comparison)
+function extractImageUrls(obj, urls = []) {
+  if (!obj || typeof obj !== 'object') return urls
+  if (Array.isArray(obj)) {
+    obj.forEach(item => {
+      if (item && typeof item === 'object' && item.url) {
+        urls.push(item.url)
+      } else {
+        extractImageUrls(item, urls)
+      }
+    })
+  } else {
+    Object.values(obj).forEach(value => {
+      if (value && typeof value === 'object') {
+        if (value.url && typeof value.url === 'string') {
+          urls.push(value.url)
         } else {
-          extractImageUrls(item, urls)
-        }
-      })
-    } else {
-      Object.values(obj).forEach(value => {
-        if (value && typeof value === 'object') {
-          if (value.url && typeof value.url === 'string') {
-            urls.push(value.url)
-          } else {
-            extractImageUrls(value, urls)
-          }
-        }
-      })
-    }
-    return urls
-  }
-  
-  const newImageUrls = extractImageUrls(webflowFieldData)
-  if (newImageUrls.length === 0) return false // No images, can't have changed
-  
-  // Get previous hash to extract old image URLs
-  // Since we don't store old fieldData, we'll compare against Sanity asset _updatedAt
-  // If any image asset was updated recently, consider it changed
-  const recentImageUpdates = checkRecentImageUpdates(sanityItem)
-  
-  return recentImageUpdates
-}
-
-// Check if any images in the Sanity item were recently updated
-// Uses asset _updatedAt timestamps - if any image was updated in last 24 hours, consider it changed
-function checkRecentImageUpdates(sanityItem) {
-  if (!sanityItem) return false
-  
-  const now = Date.now()
-  const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000) // 24 hours ago - generous window
-  
-  // Check heroImage (articles)
-  if (sanityItem.heroImage?.asset?._updatedAt) {
-    const updated = new Date(sanityItem.heroImage.asset._updatedAt).getTime()
-    if (updated > twentyFourHoursAgo) return true
-  }
-  
-  // Check section images (articles)
-  const sectionImages = [
-    sanityItem.section1Images,
-    sanityItem.section2Images,
-    sanityItem.section3Images,
-    sanityItem.section4Images
-  ]
-  
-  for (const images of sectionImages) {
-    if (Array.isArray(images)) {
-      for (const img of images) {
-        if (img?.asset?._updatedAt) {
-          const updated = new Date(img.asset._updatedAt).getTime()
-          if (updated > twentyFourHoursAgo) return true
+          extractImageUrls(value, urls)
         }
       }
+    })
+  }
+  return urls
+}
+
+// Compare image URLs from Webflow vs Sanity to detect changes
+// This is the reliable way: compare actual URLs, not timestamps
+async function checkIfImagesChanged(webflowItemId, newImageUrls, collectionId) {
+  if (!webflowItemId || newImageUrls.length === 0) return false
+  
+  try {
+    // Fetch current Webflow item to get existing image URLs
+    const currentItem = await webflowRequest(`/collections/${collectionId}/items/${webflowItemId}`)
+    if (!currentItem || !currentItem.fieldData) return false
+    
+    const currentImageUrls = extractImageUrls(currentItem.fieldData)
+    
+    // Compare URLs - if different, images changed
+    const currentSorted = currentImageUrls.sort().join('|')
+    const newSorted = newImageUrls.sort().join('|')
+    
+    if (currentSorted !== newSorted) {
+      console.log(`  🖼️  Image URLs differ: ${currentImageUrls.length} current vs ${newImageUrls.length} new`)
+      return true
     }
+    
+    return false
+  } catch (error) {
+    // If we can't fetch, assume no change (don't force update on error)
+    console.warn(`  ⚠️  Could not check image changes: ${error.message}`)
+    return false
   }
-  
-  // Check final image (articles)
-  if (sanityItem.sectionFinalImage1?.asset?._updatedAt) {
-    const updated = new Date(sanityItem.sectionFinalImage1.asset._updatedAt).getTime()
-    if (updated > twentyFourHoursAgo) return true
-  }
-  
-  // For creators, check cover, image, studioImage, portraitImage
-  if (sanityItem.cover?.asset?._updatedAt) {
-    const updated = new Date(sanityItem.cover.asset._updatedAt).getTime()
-    if (updated > twentyFourHoursAgo) return true
-  }
-  if (sanityItem.image?.asset?._updatedAt) {
-    const updated = new Date(sanityItem.image.asset._updatedAt).getTime()
-    if (updated > twentyFourHoursAgo) return true
-  }
-  if (sanityItem.studioImage?.asset?._updatedAt) {
-    const updated = new Date(sanityItem.studioImage.asset._updatedAt).getTime()
-    if (updated > twentyFourHoursAgo) return true
-  }
-  if (sanityItem.portraitImage?.asset?._updatedAt) {
-    const updated = new Date(sanityItem.portraitImage.asset._updatedAt).getTime()
-    if (updated > twentyFourHoursAgo) return true
-  }
-  
-  return false
 }
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)) }
@@ -1464,8 +1417,13 @@ async function syncCollection(options, progressCallback = null) {
       // Check both global and env var for force update
       const forceUpdate = global.FORCE_UPDATE || process.env.FORCE_UPDATE === 'true'
       
-      // Explicitly check if images have changed (reliable detection)
-      const imagesChanged = checkIfImagesChanged(item, webflowItem.fieldData, mappingKey)
+      // Extract image URLs from new fieldData for comparison
+      const newImageUrls = extractImageUrls(webflowItem.fieldData)
+      
+      // Compare with Webflow's current image URLs (reliable detection)
+      const imagesChanged = newImageUrls.length > 0 
+        ? await checkIfImagesChanged(existingId, newImageUrls, collectionId)
+        : false
       
       if (prev !== hash || forceUpdate || imagesChanged) {
         if (imagesChanged && prev === hash) {
