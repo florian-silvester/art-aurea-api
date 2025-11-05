@@ -913,18 +913,20 @@ async function deleteWebflowItems(collectionId, itemIds) {
 }
 
 // Get current Webflow items for comparison (with pagination)
+// Fetches from ALL locales to detect orphans in secondary locales
 async function getWebflowItems(collectionId) {
   try {
-    let allItems = []
+    let allItemsById = new Map() // Use Map to dedupe by ID
     let offset = 0
     const limit = 100
     
+    // Fetch from primary locale (EN)
     while (true) {
       await sleep(500) // Add delay between pagination requests
       const result = await webflowRequest(`/collections/${collectionId}/items?limit=${limit}&offset=${offset}`)
       const items = result.items || []
       
-      allItems.push(...items)
+      items.forEach(item => allItemsById.set(item.id, item))
       
       // If we got fewer items than the limit, we've reached the end
       if (items.length < limit) {
@@ -933,6 +935,31 @@ async function getWebflowItems(collectionId) {
       
       offset += limit
     }
+    
+    // Also fetch from German locale to catch orphans that only exist there
+    if (WEBFLOW_LOCALES['de-DE']) {
+      offset = 0
+      while (true) {
+        await sleep(500)
+        const result = await webflowRequest(`/collections/${collectionId}/items?limit=${limit}&offset=${offset}&locale=${WEBFLOW_LOCALES['de-DE']}`)
+        const items = result.items || []
+        
+        items.forEach(item => {
+          // Only add if not already in map (primary locale takes precedence)
+          if (!allItemsById.has(item.id)) {
+            allItemsById.set(item.id, item)
+          }
+        })
+        
+        if (items.length < limit) {
+          break
+        }
+        
+        offset += limit
+      }
+    }
+    
+    const allItems = Array.from(allItemsById.values())
     
     console.log(`  📄 Found ${allItems.length} existing items`)
     return allItems
@@ -1368,7 +1395,18 @@ async function syncCollection(options, progressCallback = null) {
       }
       
       // Prepare German-specific field data if item has DE locale content
-      if (fieldMapper && typeof fieldMapper === 'function') {
+      if (customImageSync && typeof customImageSync === 'function') {
+        try {
+          const germanResult = await customImageSync(item, 'de-DE')
+          const germanFields = germanResult.fieldData || germanResult
+          if (germanFields && Object.keys(germanFields).length > 0) {
+            webflowItem.germanFieldData = germanFields
+            console.log(`  🔍 Prepared ${Object.keys(germanFields).length} German fields for new item (customImageSync)`)
+          }
+        } catch (e) {
+          console.warn(`  ⚠️  German mapping failed (customImageSync): ${e.message}`)
+        }
+      } else if (fieldMapper && typeof fieldMapper === 'function') {
         // fieldMapper accepts (item, locale) - get German fields
         try {
           const germanFields = fieldMapper(item, 'de-DE')
@@ -1442,29 +1480,53 @@ async function syncCollection(options, progressCallback = null) {
   // SKIP ORPHAN DELETION IN SINGLE-ITEM MODE to avoid deleting everything else
   const isSingleItemSync = !!global.SINGLE_ITEM_FILTER
   if (!isSingleItemSync) {
-    const sanityIds = new Set(sanityData.map(item => item._id))
-    const sanitySlugs = new Set(sanityData.map(item => {
-      const slug = item.slug?.current || null
-      return slug
-    }).filter(Boolean))
+    // Build a set of "claimed" Webflow IDs (mapped or adopted by Sanity items)
+    const claimedWebflowIds = new Set()
     
-    const orphanedItems = existingWebflowItems.filter(wfItem => {
-      // Check if this Webflow item has a mapping to a Sanity ID
-      for (const [sanityId, webflowId] of idMappings[mappingKey]) {
-        if (webflowId === wfItem.id) {
-          return !sanityIds.has(sanityId) // Orphaned if Sanity ID doesn't exist
+    // Add all mapped Webflow IDs
+    for (const [sanityId, webflowId] of idMappings[mappingKey]) {
+      claimedWebflowIds.add(webflowId)
+    }
+    
+    // Add Webflow IDs from items we're about to create/update
+    newItems.forEach(ni => {
+      // New items will get IDs after creation, so can't add them here
+    })
+    updateItems.forEach(ui => {
+      if (ui.webflowId) claimedWebflowIds.add(ui.webflowId)
+    })
+    
+    // Also track which slugs are claimed by Sanity
+    const sanitySlugToWebflowId = new Map()
+    for (const item of sanityData) {
+      const slug = item.slug?.current
+      if (!slug) continue
+      
+      // Find the Webflow ID for this Sanity item
+      const webflowId = idMappings[mappingKey].get(item._id)
+      if (webflowId) {
+        sanitySlugToWebflowId.set(slug, webflowId)
+      } else {
+        // Check if it was adopted by slug
+        const wfItem = webflowBySlug.get(slug)
+        if (wfItem) {
+          sanitySlugToWebflowId.set(slug, wfItem.id)
+          claimedWebflowIds.add(wfItem.id)
         }
       }
-      // Also check by slug - if no Sanity item has this slug, it's orphaned
-      const wfSlug = wfItem.fieldData?.slug
-      if (wfSlug && !sanitySlugs.has(wfSlug)) {
-        return true
-      }
-      return false
+    }
+    
+    // Any Webflow item NOT claimed is an orphan
+    // This handles: items with no Sanity match, AND duplicate items with the same slug
+    const orphanedItems = existingWebflowItems.filter(wfItem => {
+      return !claimedWebflowIds.has(wfItem.id)
     })
     
     if (orphanedItems.length > 0) {
       console.log(`  🗑️  Deleting ${orphanedItems.length} orphaned items from Webflow...`)
+      orphanedItems.forEach(item => {
+        console.log(`    - ${item.fieldData?.name || 'Unnamed'} (${item.fieldData?.slug || 'no-slug'}) - ${item.id}`)
+      })
       const orphanedIds = orphanedItems.map(item => item.id)
       await deleteWebflowItems(collectionId, orphanedIds)
       // Clean up mappings
@@ -2186,6 +2248,7 @@ async function syncArticles(limit = null, progressCallback = null) {
       name: titleEN,
       slug: item.slug?.current || generateSlug(`${creatorNameStr} ${titleEN}`),
       date: item.date || null,
+      'creator-name': creatorNameStr, // Creator Name field
       'featured-creator': creatorId,
       materials: materialIds,
       'medium-2': mediumIds,
@@ -2217,6 +2280,7 @@ async function syncArticles(limit = null, progressCallback = null) {
     // German fieldData (for separate locale update)
     const germanFields = {
       name: titleDE,
+      'creator-name': creatorNameStr, // Creator Name field (same for both locales)
       'hero-headline': heroHeadlineDE,
       'hero-image-2': prepareSingleImage(item.heroImage, 'de'),
       intro: extractTextFromBlocks(item.intro?.de || item.intro?.en),
