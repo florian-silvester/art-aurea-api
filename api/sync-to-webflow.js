@@ -2236,18 +2236,19 @@ async function syncArticles(limit = null, progressCallback = null) {
       }
     }
     
-    // Build hero headline: Creator Name + Title
+    // Get creator name and titles
     const creatorNameStr = item.creatorName || item.featuredCreator?.name || ''
     const titleEN = item.title?.en || item.title?.de || 'Untitled'
     const titleDE = item.title?.de || item.title?.en || 'Untitled'
-    const heroHeadlineEN = creatorNameStr ? `${creatorNameStr} – ${titleEN}` : titleEN
-    const heroHeadlineDE = creatorNameStr ? `${creatorNameStr} – ${titleDE}` : titleDE
+    const heroHeadlineEN = titleEN // Just the title, no creator name
+    const heroHeadlineDE = titleDE // Just the title, no creator name
     
     // English fieldData
     const englishFields = {
       name: titleEN,
       slug: item.slug?.current || generateSlug(`${creatorNameStr} ${titleEN}`),
       date: item.date || null,
+      issue: item.issue || '',
       'creator-name': creatorNameStr, // Creator Name field
       'featured-creator': creatorId,
       materials: materialIds,
@@ -2280,6 +2281,7 @@ async function syncArticles(limit = null, progressCallback = null) {
     // German fieldData (for separate locale update)
     const germanFields = {
       name: titleDE,
+      issue: item.issue || '', // Same for both locales
       'creator-name': creatorNameStr, // Creator Name field (same for both locales)
       'hero-headline': heroHeadlineDE,
       'hero-image-2': prepareSingleImage(item.heroImage, 'de'),
