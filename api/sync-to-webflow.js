@@ -513,14 +513,10 @@ function convertSanityBlocksToWebflowRichText(blocks) {
 }
 
 // Convert captions with numbered paragraphs (bold numbers)
-// imageCount: only show this many captions (matching number of images)
-function convertCaptionsToWebflowRichText(blocks, imageCount = null) {
+function convertCaptionsToWebflowRichText(blocks) {
   if (!blocks || !Array.isArray(blocks)) return null
   
-  // Limit captions to match image count
-  const captionsToShow = imageCount ? blocks.slice(0, imageCount) : blocks
-  
-  const htmlElements = captionsToShow.map((block, index) => {
+  const htmlElements = blocks.map((block, index) => {
     if (block._type === 'block' && block.children) {
       let paragraphContent = ''
       
@@ -2365,19 +2361,19 @@ async function syncArticles(limit = null, progressCallback = null) {
       'section-1-images-2': prepareImages(item.section1Images, 'en'),
       'section-1-layout-3': layoutOptionMaps.section1[item.section1Layout] || layoutOptionMaps.section1['Main'],
       'section-1-text-2': convertSanityBlocksToWebflowRichText(enSections[0]),
-      'section-1-captions-2': convertCaptionsToWebflowRichText(item.section1Captions?.en, item.section1Images?.length),
+      'section-1-captions-2': convertCaptionsToWebflowRichText(item.section1Captions?.en),
       'section-2-images-2': prepareImages(item.section2Images, 'en'),
       'section-2-layout-3': layoutOptionMaps.section2[item.section2Layout] || layoutOptionMaps.section2['Main'],
       'section-2-text-2': convertSanityBlocksToWebflowRichText(enSections[1]),
-      'section-2-captions-2': convertCaptionsToWebflowRichText(item.section2Captions?.en, item.section2Images?.length),
+      'section-2-captions-2': convertCaptionsToWebflowRichText(item.section2Captions?.en),
       'section-3-images-2': prepareImages(item.section3Images, 'en'),
       'section-3-layout-3': layoutOptionMaps.section3[item.section3Layout] || layoutOptionMaps.section3['Main'],
       'section-3-text-2': convertSanityBlocksToWebflowRichText(enSections[2]),
-      'section-3-captions-2': convertCaptionsToWebflowRichText(item.section3Captions?.en, item.section3Images?.length),
+      'section-3-captions-2': convertCaptionsToWebflowRichText(item.section3Captions?.en),
       'section-4-images-2': prepareImages(item.section4Images, 'en'),
       'section-4-layout-3': layoutOptionMaps.section4[item.section4Layout] || layoutOptionMaps.section4['Main'],
       'section-4-text-2': convertSanityBlocksToWebflowRichText(enSections[3]),
-      'section-4-captions-2': convertCaptionsToWebflowRichText(item.section4Captions?.en, item.section4Images?.length),
+      'section-4-captions-2': convertCaptionsToWebflowRichText(item.section4Captions?.en),
       'section-final-image-1': prepareSingleImage(item.sectionFinalImage1, 'en')
     }
     
@@ -2391,16 +2387,16 @@ async function syncArticles(limit = null, progressCallback = null) {
       intro: convertSanityBlocksToWebflowRichText(item.intro?.de || item.intro?.en),
       'section-1-images-2': prepareImages(item.section1Images, 'de'),
       'section-1-text-2': convertSanityBlocksToWebflowRichText(deSections[0]),
-      'section-1-captions-2': convertCaptionsToWebflowRichText(item.section1Captions?.de, item.section1Images?.length),
+      'section-1-captions-2': convertCaptionsToWebflowRichText(item.section1Captions?.de),
       'section-2-images-2': prepareImages(item.section2Images, 'de'),
       'section-2-text-2': convertSanityBlocksToWebflowRichText(deSections[1]),
-      'section-2-captions-2': convertCaptionsToWebflowRichText(item.section2Captions?.de, item.section2Images?.length),
+      'section-2-captions-2': convertCaptionsToWebflowRichText(item.section2Captions?.de),
       'section-3-images-2': prepareImages(item.section3Images, 'de'),
       'section-3-text-2': convertSanityBlocksToWebflowRichText(deSections[2]),
-      'section-3-captions-2': convertCaptionsToWebflowRichText(item.section3Captions?.de, item.section3Images?.length),
+      'section-3-captions-2': convertCaptionsToWebflowRichText(item.section3Captions?.de),
       'section-4-images-2': prepareImages(item.section4Images, 'de'),
       'section-4-text-2': convertSanityBlocksToWebflowRichText(deSections[3]),
-      'section-4-captions-2': convertCaptionsToWebflowRichText(item.section4Captions?.de, item.section4Images?.length),
+      'section-4-captions-2': convertCaptionsToWebflowRichText(item.section4Captions?.de),
       'section-final-image-1': prepareSingleImage(item.sectionFinalImage1, 'de')
     }
     
