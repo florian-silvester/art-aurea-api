@@ -512,6 +512,65 @@ function convertSanityBlocksToWebflowRichText(blocks) {
   return htmlElements.join('')
 }
 
+// Convert captions with numbered paragraphs (bold numbers)
+function convertCaptionsToWebflowRichText(blocks) {
+  if (!blocks || !Array.isArray(blocks)) return null
+  
+  const htmlElements = blocks.map((block, index) => {
+    if (block._type === 'block' && block.children) {
+      let paragraphContent = ''
+      
+      // Process each text span
+      for (const child of block.children) {
+        let text = child.text || ''
+        
+        // Apply formatting marks
+        if (child.marks && child.marks.length > 0) {
+          // Track which marks to apply
+          const marks = {
+            strong: false,      // Bold
+            em: false,          // Italic
+            underline: false,   // Underline
+            strike: false,      // Strike-through
+            link: null          // Link URL
+          }
+          
+          // Parse all marks
+          for (const mark of child.marks) {
+            if (mark === 'strong') marks.strong = true
+            else if (mark === 'em') marks.em = true
+            else if (mark === 'underline') marks.underline = true
+            else if (mark === 'strike-through') marks.strike = true
+            else if (typeof mark === 'object' && mark._type === 'link') {
+              marks.link = mark.href
+            }
+          }
+          
+          // Apply marks in proper nesting order (inside-out)
+          if (marks.link) text = `<a href="${marks.link}">${text}</a>`
+          if (marks.strong) text = `<strong>${text}</strong>`
+          if (marks.em) text = `<em>${text}</em>`
+          if (marks.underline) text = `<u>${text}</u>`
+          if (marks.strike) text = `<s>${text}</s>`
+        }
+        
+        paragraphContent += text
+      }
+      
+      // Prepend bold number to paragraph
+      const numberedContent = `<strong>${index + 1}</strong> ${paragraphContent}`
+      
+      // Wrap in paragraph
+      return `<p>${numberedContent}</p>`
+    }
+    return null
+  }).filter(Boolean)
+  
+  if (htmlElements.length === 0) return null
+  
+  return htmlElements.join('')
+}
+
 // Extract plain text from Sanity rich text blocks (for non-rich-text fields)
 function extractTextFromBlocks(blocks) {
   if (!blocks || !Array.isArray(blocks)) return ''
@@ -2302,19 +2361,19 @@ async function syncArticles(limit = null, progressCallback = null) {
       'section-1-images-2': prepareImages(item.section1Images, 'en'),
       'section-1-layout-3': layoutOptionMaps.section1[item.section1Layout] || layoutOptionMaps.section1['Main'],
       'section-1-text-2': convertSanityBlocksToWebflowRichText(enSections[0]),
-      'section-1-captions-2': convertSanityBlocksToWebflowRichText(item.section1Captions?.en),
+      'section-1-captions-2': convertCaptionsToWebflowRichText(item.section1Captions?.en),
       'section-2-images-2': prepareImages(item.section2Images, 'en'),
       'section-2-layout-3': layoutOptionMaps.section2[item.section2Layout] || layoutOptionMaps.section2['Main'],
       'section-2-text-2': convertSanityBlocksToWebflowRichText(enSections[1]),
-      'section-2-captions-2': convertSanityBlocksToWebflowRichText(item.section2Captions?.en),
+      'section-2-captions-2': convertCaptionsToWebflowRichText(item.section2Captions?.en),
       'section-3-images-2': prepareImages(item.section3Images, 'en'),
       'section-3-layout-3': layoutOptionMaps.section3[item.section3Layout] || layoutOptionMaps.section3['Main'],
       'section-3-text-2': convertSanityBlocksToWebflowRichText(enSections[2]),
-      'section-3-captions-2': convertSanityBlocksToWebflowRichText(item.section3Captions?.en),
+      'section-3-captions-2': convertCaptionsToWebflowRichText(item.section3Captions?.en),
       'section-4-images-2': prepareImages(item.section4Images, 'en'),
       'section-4-layout-3': layoutOptionMaps.section4[item.section4Layout] || layoutOptionMaps.section4['Main'],
       'section-4-text-2': convertSanityBlocksToWebflowRichText(enSections[3]),
-      'section-4-captions-2': convertSanityBlocksToWebflowRichText(item.section4Captions?.en),
+      'section-4-captions-2': convertCaptionsToWebflowRichText(item.section4Captions?.en),
       'section-final-image-1': prepareSingleImage(item.sectionFinalImage1, 'en')
     }
     
@@ -2328,16 +2387,16 @@ async function syncArticles(limit = null, progressCallback = null) {
       intro: convertSanityBlocksToWebflowRichText(item.intro?.de || item.intro?.en),
       'section-1-images-2': prepareImages(item.section1Images, 'de'),
       'section-1-text-2': convertSanityBlocksToWebflowRichText(deSections[0]),
-      'section-1-captions-2': convertSanityBlocksToWebflowRichText(item.section1Captions?.de),
+      'section-1-captions-2': convertCaptionsToWebflowRichText(item.section1Captions?.de),
       'section-2-images-2': prepareImages(item.section2Images, 'de'),
       'section-2-text-2': convertSanityBlocksToWebflowRichText(deSections[1]),
-      'section-2-captions-2': convertSanityBlocksToWebflowRichText(item.section2Captions?.de),
+      'section-2-captions-2': convertCaptionsToWebflowRichText(item.section2Captions?.de),
       'section-3-images-2': prepareImages(item.section3Images, 'de'),
       'section-3-text-2': convertSanityBlocksToWebflowRichText(deSections[2]),
-      'section-3-captions-2': convertSanityBlocksToWebflowRichText(item.section3Captions?.de),
+      'section-3-captions-2': convertCaptionsToWebflowRichText(item.section3Captions?.de),
       'section-4-images-2': prepareImages(item.section4Images, 'de'),
       'section-4-text-2': convertSanityBlocksToWebflowRichText(deSections[3]),
-      'section-4-captions-2': convertSanityBlocksToWebflowRichText(item.section4Captions?.de),
+      'section-4-captions-2': convertCaptionsToWebflowRichText(item.section4Captions?.de),
       'section-final-image-1': prepareSingleImage(item.sectionFinalImage1, 'de')
     }
     
