@@ -435,41 +435,81 @@ async function updateImageMetadata(webflowAssetId, altText) {
   }
 }
 
-// Convert Sanity block content to Webflow's Rich Text JSON format
+// Convert Sanity block content to Webflow's Rich Text HTML format
 function convertSanityBlocksToWebflowRichText(blocks) {
   if (!blocks || !Array.isArray(blocks)) return null
-
-  const content = blocks.map(block => {
+  
+  const htmlElements = blocks.map(block => {
     if (block._type === 'block' && block.children) {
-      const paragraphContent = block.children.map(child => {
-        const marks = child.marks?.map(mark => {
-          if (mark === 'strong') return { type: 'bold' }
-          if (mark === 'em') return { type: 'italic' }
-          if (mark.startsWith('link-')) return { type: 'link', attrs: { href: mark.substring(5) } }
-          return { type: mark }
-        }).filter(Boolean)
-
-        return {
-          type: 'text',
-          text: child.text || '',
-          ...(marks && marks.length > 0 && { marks })
-        }
-      })
+      let paragraphContent = ''
       
-      return {
-        type: 'paragraph',
-        content: paragraphContent
+      // Process each text span
+      for (const child of block.children) {
+        let text = child.text || ''
+        
+        // Apply formatting marks
+        if (child.marks && child.marks.length > 0) {
+          // Track which marks to apply
+          const marks = {
+            strong: false,      // Bold
+            em: false,          // Italic
+            underline: false,   // Underline
+            strike: false,      // Strike-through
+            link: null          // Link URL
+          }
+          
+          // Parse all marks
+          for (const mark of child.marks) {
+            if (mark === 'strong') marks.strong = true
+            else if (mark === 'em') marks.em = true
+            else if (mark === 'underline') marks.underline = true
+            else if (mark === 'strike-through') marks.strike = true
+            else if (typeof mark === 'object' && mark._type === 'link') {
+              marks.link = mark.href
+            }
+          }
+          
+          // Apply marks in proper nesting order (inside-out)
+          if (marks.link) text = `<a href="${marks.link}">${text}</a>`
+          if (marks.strong) text = `<strong>${text}</strong>`
+          if (marks.em) text = `<em>${text}</em>`
+          if (marks.underline) text = `<u>${text}</u>`
+          if (marks.strike) text = `<s>${text}</s>`
+        }
+        
+        paragraphContent += text
+      }
+      
+      // Wrap in appropriate block element based on style
+      const style = block.style || 'normal'
+      switch (style) {
+        case 'h1': return `<h1>${paragraphContent}</h1>`
+        case 'h2': return `<h2>${paragraphContent}</h2>`
+        case 'h3': return `<h3>${paragraphContent}</h3>`
+        case 'h4': return `<h4>${paragraphContent}</h4>`
+        case 'blockquote': return `<blockquote>${paragraphContent}</blockquote>`
+        default: return `<p>${paragraphContent}</p>`
+      }
+    } 
+    // Handle list items
+    else if (block._type === 'block' && block.listItem) {
+      let listContent = ''
+      for (const child of block.children || []) {
+        listContent += child.text || ''
+      }
+      
+      if (block.listItem === 'bullet') {
+        return `<ul><li>${listContent}</li></ul>`
+      } else if (block.listItem === 'number') {
+        return `<ol><li>${listContent}</li></ol>`
       }
     }
     return null
   }).filter(Boolean)
-
-  if (content.length === 0) return null
   
-  return {
-    type: 'doc',
-    content: content
-  }
+  if (htmlElements.length === 0) return null
+  
+  return htmlElements.join('')
 }
 
 // Extract plain text from Sanity rich text blocks (for non-rich-text fields)
